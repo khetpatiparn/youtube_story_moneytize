@@ -1,7 +1,6 @@
 # YouTube Story Automation
 
-POC for a recoverable YouTube story automation workflow. The current build includes the repo baseline and an initial Python orchestrator skeleton.
-The orchestrator now includes SQLite checkpoint/resume support and deterministic fake LLM, image, and TTS provider contracts.
+POC for a recoverable YouTube story automation workflow. The current build includes the repo baseline, a Python orchestrator skeleton, SQLite checkpoint/resume support, deterministic fake provider contracts, and a static Remotion renderer.
 
 ## Current Orchestrator Commands
 
@@ -15,3 +14,13 @@ python -m app resume --project-id project_001 --checkpoint-db ./data/checkpoints
 ```
 
 Generated project runtime data goes under `projects/`; checkpoint data goes under `data/`. Both generated paths are ignored by Git.
+
+## Current Renderer Commands
+
+```powershell
+npm.cmd install
+npm.cmd run test:renderer
+npm.cmd run render:sample
+```
+
+The sample renderer reads `apps/renderer/sample/render_payload.json` and writes `renders/sample.mp4`. Render outputs are ignored by Git.

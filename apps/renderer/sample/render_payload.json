@@ -1,0 +1,24 @@
+{
+  "fps": 30,
+  "width": 1920,
+  "height": 1080,
+  "audioPath": "audio/voice_normalized.wav",
+  "scenes": [
+    {
+      "sceneId": "scene_001",
+      "startFrame": 0,
+      "durationInFrames": 150,
+      "imagePath": "images/scene_001.svg",
+      "motion": "slow_push",
+      "focalPoint": [0.5, 0.4]
+    },
+    {
+      "sceneId": "scene_002",
+      "startFrame": 150,
+      "durationInFrames": 60,
+      "imagePath": "images/scene_002.svg",
+      "motion": "pan_left",
+      "focalPoint": [0.5, 0.5]
+    }
+  ]
+}

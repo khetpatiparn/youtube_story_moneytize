@@ -1,33 +1,33 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-This repository contains `youtube_story_automation_poc_plan.md` plus a Python orchestrator with checkpoints and provider contracts. The planned system uses LangGraph and Remotion.
+This repo contains `youtube_story_automation_poc_plan.md`, a Python orchestrator, and a static Remotion renderer.
 
-When code is added, keep the planned layout:
 - `apps/orchestrator/src/` for graph, nodes, schemas, providers, services, repositories, and CLI.
 - `apps/orchestrator/tests/` for Python tests.
-- `apps/renderer/src/` for Remotion compositions, components, motions, and `index.ts`.
+- `apps/renderer/src/` for Remotion compositions, components, motions, and `index.tsx`.
 - `configs/` for prompts, channel profiles, and render profiles.
 - `projects/{project_id}/` for generated assets, reports, logs, and renders.
 - `data/` for checkpoints and caches.
 
 ## Build, Test, and Development Commands
 Use `$env:PYTHONPATH='apps/orchestrator/src'` before commands unless installed editable.
-- `python -m unittest discover apps/orchestrator/tests` runs the current test suite.
+- `python -m unittest discover apps/orchestrator/tests` runs orchestrator tests.
 - `python -m app create --topic "..." --duration 180 --profile simple_story_th` creates a project.
 - `python -m app run --project-id project_001 --checkpoint-db ./data/checkpoints.sqlite` runs and checkpoints.
 - `python -m app resume --project-id project_001 --checkpoint-db ./data/checkpoints.sqlite` restores checkpoint state.
 - `python -m app status --project-id project_001` inspects progress.
-- `npx remotion render src/index.ts YouTubeStory ...` to render video output.
+- `npm.cmd run test:renderer` validates static renderer payloads.
+- `npm.cmd run render:sample` renders `renders/sample.mp4`.
 
 ## Coding Style & Naming Conventions
-Use Python for orchestration and TypeScript/React for Remotion. Keep one workflow node responsibility per file. Prefer explicit schemas for LLM outputs and provider contracts. Use snake_case in Python and PascalCase for React components.
+Use Python for orchestration and TypeScript/React for Remotion. Keep one workflow node responsibility per file. Prefer explicit schemas and provider contracts. Use snake_case in Python and PascalCase for React.
 
 ## Testing Guidelines
-Prioritize deterministic tests for prompt hashing, provider contracts, cache behavior, file naming, retry policy, timeline math, state transitions, checkpoint resume, and scene retry flows.
+Prioritize deterministic tests for prompt hashing, provider contracts, cache behavior, file naming, retry policy, timeline math, state transitions, checkpoint resume, renderer payloads, and scene retry flows.
 
 ## Commit & Pull Request Guidelines
-Use short imperative commits. Do not implement on `main` unless approved; create one focused branch per slice. PRs should link `/goals`, describe impact, list validation, note services, include render samples for UI/video changes, and state rollback.
+Use short imperative commits. Do not implement on `main` unless approved; create one focused branch per slice. PRs should link `/goals`, describe impact, list validation, note services, include render samples for video changes, and state rollback.
 
 ## Goals & Recovery Workflow
 Before editing, check `/goals`, branch, and `git status --short --branch`. Keep one goal per slice and commit after verified milestones. For unmerged failures, switch to a known-good branch. For merged regressions, prefer `git revert`.
