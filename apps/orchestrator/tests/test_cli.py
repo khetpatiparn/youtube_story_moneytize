@@ -116,6 +116,89 @@ class CliTests(unittest.TestCase):
             self.assertEqual(resume_payload["status"], "initialized")
             self.assertEqual(resume_payload["current_node"], "initialize_project")
 
+            script_approval_result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "app",
+                    "approve-script",
+                    "--project-id",
+                    "project_001",
+                    "--projects-dir",
+                    temp_dir,
+                    "--approved",
+                    "--reviewer",
+                    "human",
+                    "--notes",
+                    "Script ready.",
+                ],
+                check=False,
+                capture_output=True,
+                env=env,
+                text=True,
+            )
+
+            self.assertEqual(script_approval_result.returncode, 0, script_approval_result.stderr)
+            script_approval_payload = json.loads(script_approval_result.stdout)
+            self.assertEqual(script_approval_payload["stage"], "script")
+            self.assertTrue(script_approval_payload["approved"])
+
+            final_approval_result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "app",
+                    "approve-final",
+                    "--project-id",
+                    "project_001",
+                    "--projects-dir",
+                    temp_dir,
+                    "--changes-requested",
+                    "--reviewer",
+                    "human",
+                    "--notes",
+                    "Audio needs balancing.",
+                ],
+                check=False,
+                capture_output=True,
+                env=env,
+                text=True,
+            )
+
+            self.assertEqual(final_approval_result.returncode, 0, final_approval_result.stderr)
+            final_approval_payload = json.loads(final_approval_result.stdout)
+            self.assertEqual(final_approval_payload["stage"], "final")
+            self.assertFalse(final_approval_payload["approved"])
+
+            report_result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "app",
+                    "report",
+                    "--project-id",
+                    "project_001",
+                    "--projects-dir",
+                    temp_dir,
+                    "--video-path",
+                    "render/story.mp4",
+                    "--quality-score",
+                    "0.91",
+                    "--issue",
+                    "No final approval yet",
+                ],
+                check=False,
+                capture_output=True,
+                env=env,
+                text=True,
+            )
+
+            self.assertEqual(report_result.returncode, 0, report_result.stderr)
+            report_payload = json.loads(report_result.stdout)
+            self.assertEqual(report_payload["quality_report_path"], "reports/quality_report.json")
+            self.assertEqual(report_payload["contact_sheet_path"], "reports/contact_sheet.md")
+            self.assertEqual(report_payload["project_report_path"], "reports/project_report.md")
+
 
 if __name__ == "__main__":
     unittest.main()

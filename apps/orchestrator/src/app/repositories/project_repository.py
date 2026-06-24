@@ -59,6 +59,9 @@ class ProjectRepository:
             encoding="utf-8",
         )
 
+    def project_dir(self, project_id: str) -> Path:
+        return self._project_dir(project_id)
+
     def _next_project_id(self) -> str:
         existing_ids = {
             path.name
