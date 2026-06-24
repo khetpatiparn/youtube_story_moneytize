@@ -1,0 +1,19 @@
+{
+  "name": "youtube-story-automation",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test:renderer": "node --test apps/renderer/tests/*.test.mjs",
+    "render:sample": "remotion render apps/renderer/src/index.tsx YouTubeStory renders/sample.mp4 --props apps/renderer/sample/render_payload.json"
+  },
+  "dependencies": {
+    "@remotion/cli": "^4.0.0",
+    "remotion": "^4.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  }
+}

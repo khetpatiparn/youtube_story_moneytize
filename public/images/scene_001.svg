@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080">
+  <rect width="1920" height="1080" fill="#172554"/>
+  <circle cx="1460" cy="220" r="120" fill="#facc15"/>
+  <path d="M0 760 C360 650 600 690 920 610 C1260 525 1540 610 1920 500 V1080 H0 Z" fill="#14532d"/>
+  <path d="M0 840 C420 760 680 800 980 730 C1320 650 1580 720 1920 620 V1080 H0 Z" fill="#166534"/>
+  <rect x="680" y="455" width="560" height="360" rx="24" fill="#f8fafc"/>
+  <path d="M630 482 L960 250 L1290 482 Z" fill="#b45309"/>
+  <rect x="905" y="640" width="110" height="175" rx="10" fill="#7c2d12"/>
+  <rect x="745" y="545" width="115" height="95" rx="10" fill="#38bdf8"/>
+  <rect x="1060" y="545" width="115" height="95" rx="10" fill="#38bdf8"/>
+  <text x="960" y="940" fill="#f8fafc" font-family="Arial, sans-serif" font-size="72" text-anchor="middle">Village Story Begins</text>
+</svg>

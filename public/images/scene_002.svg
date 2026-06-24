@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080">
+  <rect width="1920" height="1080" fill="#0f172a"/>
+  <path d="M0 690 C300 620 500 670 760 590 C1080 490 1320 530 1920 420 V1080 H0 Z" fill="#1d4ed8"/>
+  <path d="M0 770 C380 720 610 750 940 690 C1260 630 1500 650 1920 580 V1080 H0 Z" fill="#2563eb"/>
+  <circle cx="520" cy="380" r="88" fill="#fde68a"/>
+  <circle cx="520" cy="340" r="46" fill="#7c2d12"/>
+  <path d="M430 520 C455 455 585 455 610 520 L650 735 H390 Z" fill="#f97316"/>
+  <path d="M760 355 C960 245 1160 260 1390 370" fill="none" stroke="#bae6fd" stroke-width="28" stroke-linecap="round"/>
+  <path d="M810 445 C1010 335 1190 350 1435 455" fill="none" stroke="#e0f2fe" stroke-width="18" stroke-linecap="round"/>
+  <text x="960" y="940" fill="#f8fafc" font-family="Arial, sans-serif" font-size="72" text-anchor="middle">A Lesson By The River</text>
+</svg>
