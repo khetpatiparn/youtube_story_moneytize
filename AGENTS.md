@@ -1,7 +1,7 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-This repository currently contains `youtube_story_automation_poc_plan.md`. The planned system uses a Python LangGraph orchestrator and Remotion renderer.
+This repository contains `youtube_story_automation_poc_plan.md` plus an initial Python orchestrator skeleton. The planned system uses LangGraph and Remotion.
 
 When code is added, keep the planned layout:
 - `apps/orchestrator/src/` for graph, nodes, schemas, providers, services, repositories, and CLI.
@@ -12,10 +12,11 @@ When code is added, keep the planned layout:
 - `data/` for checkpoints and caches.
 
 ## Build, Test, and Development Commands
-No runnable project files are present yet. Expected commands include:
-- `python -m app create --topic "..." --duration 180 --profile simple_story_th` to create a project.
-- `python -m app run --project-id project_001` to start or resume execution.
-- `python -m app status --project-id project_001` to inspect progress.
+Use `$env:PYTHONPATH='apps/orchestrator/src'` before commands unless installed editable.
+- `python -m unittest discover apps/orchestrator/tests` runs the current test suite.
+- `python -m app create --topic "..." --duration 180 --profile simple_story_th` creates a project.
+- `python -m app run --project-id project_001` runs the hello-world graph.
+- `python -m app status --project-id project_001` inspects progress.
 - `npx remotion render src/index.ts YouTubeStory ...` to render video output.
 
 ## Coding Style & Naming Conventions
@@ -33,5 +34,5 @@ Before editing, check `/goals`, branch, and `git status --short --branch`. Keep 
 ## Context Handoff
 At feature end, update `AGENTS.md` for new commands, layout rules, tests, recovery steps, or limitations, then start the next feature with fresh context when possible. If context is near full mid-feature, compact first and preserve goal, branch, changed files, validation, blockers, and next command.
 
-## Security & Configuration Tips
+## Security & Config
 Store secrets in `.env` and commit only `.env.example`. Never log keys or OAuth tokens. Validate file names, MIME types, sizes, and project paths. Route external operations through reviewed wrappers.

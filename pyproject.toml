@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "youtube-story-automation"
+version = "0.1.0"
+description = "POC for a recoverable YouTube story automation workflow."
+requires-python = ">=3.11"
+dependencies = [
+    "langgraph>=0.2",
+    "pydantic>=2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+]
+
+[tool.setuptools.packages.find]
+where = ["apps/orchestrator/src"]
