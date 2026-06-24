@@ -114,3 +114,11 @@ class ProjectMetadata:
             updated_at=state.get("updated_at", self.updated_at),
             current_node=state.get("current_node", self.current_node),
         )
+
+    def with_status(self, status: str, current_node: str | None = None) -> "ProjectMetadata":
+        return replace(
+            self,
+            status=status,
+            updated_at=datetime.now(UTC).isoformat(),
+            current_node=current_node if current_node is not None else self.current_node,
+        )
