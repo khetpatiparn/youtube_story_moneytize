@@ -14,6 +14,7 @@ class CliTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             env = os.environ.copy()
             env["PYTHONPATH"] = str(source_dir)
+            checkpoint_db = str(Path(temp_dir) / "checkpoints.sqlite")
 
             create_result = subprocess.run(
                 [
@@ -74,6 +75,8 @@ class CliTests(unittest.TestCase):
                     "project_001",
                     "--projects-dir",
                     temp_dir,
+                    "--checkpoint-db",
+                    checkpoint_db,
                 ],
                 check=False,
                 capture_output=True,
@@ -86,6 +89,32 @@ class CliTests(unittest.TestCase):
             self.assertEqual(run_payload["project_id"], "project_001")
             self.assertEqual(run_payload["status"], "initialized")
             self.assertEqual(run_payload["current_node"], "initialize_project")
+            self.assertTrue(Path(checkpoint_db).is_file())
+
+            resume_result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "app",
+                    "resume",
+                    "--project-id",
+                    "project_001",
+                    "--projects-dir",
+                    temp_dir,
+                    "--checkpoint-db",
+                    checkpoint_db,
+                ],
+                check=False,
+                capture_output=True,
+                env=env,
+                text=True,
+            )
+
+            self.assertEqual(resume_result.returncode, 0, resume_result.stderr)
+            resume_payload = json.loads(resume_result.stdout)
+            self.assertEqual(resume_payload["project_id"], "project_001")
+            self.assertEqual(resume_payload["status"], "initialized")
+            self.assertEqual(resume_payload["current_node"], "initialize_project")
 
 
 if __name__ == "__main__":
