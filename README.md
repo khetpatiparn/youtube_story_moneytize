@@ -1,6 +1,7 @@
 # YouTube Story Automation
 
 POC for a recoverable YouTube story automation workflow. The current build includes the repo baseline and an initial Python orchestrator skeleton.
+The orchestrator now includes SQLite checkpoint/resume support and deterministic fake LLM, image, and TTS provider contracts.
 
 ## Current Orchestrator Commands
 

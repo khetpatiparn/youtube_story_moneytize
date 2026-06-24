@@ -1,7 +1,7 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-This repository contains `youtube_story_automation_poc_plan.md` plus a Python orchestrator skeleton. The planned system uses LangGraph and Remotion.
+This repository contains `youtube_story_automation_poc_plan.md` plus a Python orchestrator with checkpoints and provider contracts. The planned system uses LangGraph and Remotion.
 
 When code is added, keep the planned layout:
 - `apps/orchestrator/src/` for graph, nodes, schemas, providers, services, repositories, and CLI.
@@ -24,7 +24,7 @@ Use `$env:PYTHONPATH='apps/orchestrator/src'` before commands unless installed e
 Use Python for orchestration and TypeScript/React for Remotion. Keep one workflow node responsibility per file. Prefer explicit schemas for LLM outputs and provider contracts. Use snake_case in Python and PascalCase for React components.
 
 ## Testing Guidelines
-Prioritize deterministic tests for prompt hashing, cache behavior, file naming, retry policy, timeline math, state transitions, checkpoint resume, and scene retry flows.
+Prioritize deterministic tests for prompt hashing, provider contracts, cache behavior, file naming, retry policy, timeline math, state transitions, checkpoint resume, and scene retry flows.
 
 ## Commit & Pull Request Guidelines
 Use short imperative commits. Do not implement on `main` unless approved; create one focused branch per slice. PRs should link `/goals`, describe impact, list validation, note services, include render samples for UI/video changes, and state rollback.
