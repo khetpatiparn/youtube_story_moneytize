@@ -38,6 +38,7 @@ renders/
 *.mp3
 
 # Logs and temporary files
+.superpowers/
 *.log
 logs/
 tmp/
