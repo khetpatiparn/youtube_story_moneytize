@@ -63,7 +63,16 @@ function normalizeQuality(report) {
 
 async function loadProject(projectDir) {
   const metadataPath = path.join(projectDir, "metadata.json");
-  const metadata = await readJson(metadataPath);
+  let metadata;
+  try {
+    metadata = await readJson(metadataPath);
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return null;
+    }
+
+    return null;
+  }
   const projectId = metadata.project_id ?? metadata.projectId ?? path.basename(projectDir);
 
   const scenesFile = path.join(projectDir, ...scenesPath);
@@ -160,7 +169,10 @@ export async function loadDashboardProjects(projectsDir = path.resolve("projects
     try {
       const metadataPath = path.join(projectDir, "metadata.json");
       await access(metadataPath);
-      projects.push(await loadProject(projectDir));
+      const project = await loadProject(projectDir);
+      if (project) {
+        projects.push(project);
+      }
     } catch (error) {
       if (error?.code !== "ENOENT") {
         continue;

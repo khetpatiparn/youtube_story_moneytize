@@ -91,3 +91,16 @@ test("handles missing optional reports without throwing", async () => {
   assert.deepEqual(projects[0].quality.issues, []);
   assert.deepEqual(projects[0].scenes, []);
 });
+
+test("falls back to demo project when metadata is malformed", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "dashboard-invalid-metadata-"));
+  const projectDir = path.join(root, "projects", "project_003");
+  await mkdir(projectDir, {recursive: true});
+  await writeFile(path.join(projectDir, "metadata.json"), "{");
+
+  const projects = await loadDashboardProjects(path.join(root, "projects"));
+
+  assert.equal(projects.length, 1);
+  assert.equal(projects[0].source, "demo");
+  assert.equal(projects[0].projectId, "demo_project");
+});
