@@ -25,6 +25,14 @@ async function readJson(filePath) {
   return JSON.parse(raw);
 }
 
+async function readOptionalJson(filePath, fallback) {
+  try {
+    return await readJson(filePath);
+  } catch {
+    return fallback;
+  }
+}
+
 function normalizeScene(scene) {
   return {
     sceneId: scene.sceneId ?? scene.scene_id ?? null,
@@ -79,47 +87,17 @@ async function loadProject(projectDir) {
   const approvalsFile = path.join(projectDir, ...approvalsPath);
   const qualityFile = path.join(projectDir, ...qualityReportPath);
 
-  let scenes = [];
-  try {
-    const sceneData = await readJson(scenesFile);
-    if (Array.isArray(sceneData)) {
-      scenes = sceneData.map(normalizeScene);
-    }
-  } catch (error) {
-    if (error?.code !== "ENOENT") {
-      throw error;
-    }
-  }
+  const sceneData = await readOptionalJson(scenesFile, []);
+  const scenes = Array.isArray(sceneData) ? sceneData.map(normalizeScene) : [];
 
-  let approvals = {
-    script: "pending",
-    final: "pending",
+  const approvalsData = await readOptionalJson(approvalsFile, null);
+  const approvals = {
+    script: normalizeApproval(approvalsData?.script),
+    final: normalizeApproval(approvalsData?.final),
   };
-  try {
-    const approvalsData = await readJson(approvalsFile);
-    approvals = {
-      script: normalizeApproval(approvalsData.script),
-      final: normalizeApproval(approvalsData.final),
-    };
-  } catch (error) {
-    if (error?.code !== "ENOENT") {
-      throw error;
-    }
-  }
 
-  let quality = {
-    score: null,
-    issues: [],
-    videoPath: null,
-  };
-  try {
-    const qualityData = await readJson(qualityFile);
-    quality = normalizeQuality(qualityData);
-  } catch (error) {
-    if (error?.code !== "ENOENT") {
-      throw error;
-    }
-  }
+  const qualityData = await readOptionalJson(qualityFile, null);
+  const quality = normalizeQuality(qualityData);
 
   return {
     projectId,
@@ -136,7 +114,7 @@ async function loadProject(projectDir) {
       projectReportPath: "reports/project_report.md",
       qualityReportPath: "reports/quality_report.json",
     },
-  };
+  }
 }
 
 export async function loadDashboardProjects(projectsDir = path.resolve("projects")) {
@@ -159,7 +137,10 @@ export async function loadDashboardProjects(projectsDir = path.resolve("projects
     throw error;
   }
 
-  const projectDirs = entries.filter((entry) => entry.isDirectory()).map((entry) => path.join(projectsDir, entry.name));
+  const projectDirs = entries
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => path.join(projectsDir, entry.name))
+    .sort((left, right) => left.localeCompare(right));
   if (projectDirs.length === 0) {
     return [cloneSampleProject()];
   }

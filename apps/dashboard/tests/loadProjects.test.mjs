@@ -104,3 +104,28 @@ test("falls back to demo project when metadata is malformed", async () => {
   assert.equal(projects[0].source, "demo");
   assert.equal(projects[0].projectId, "demo_project");
 });
+
+test("keeps live project when optional approvals json is malformed", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "dashboard-malformed-optional-"));
+  const projectDir = path.join(root, "projects", "project_004");
+  await mkdir(path.join(projectDir, "reports"), {recursive: true});
+  await writeFile(
+    path.join(projectDir, "metadata.json"),
+    JSON.stringify({
+      project_id: "project_004",
+      topic: "A river spirit teaches patience",
+      status: "final_changes_requested",
+      target_duration_seconds: 180,
+      target_language: "th",
+    }),
+  );
+  await writeFile(path.join(projectDir, "reports", "approvals.json"), "{");
+
+  const projects = await loadDashboardProjects(path.join(root, "projects"));
+
+  assert.equal(projects.length, 1);
+  assert.equal(projects[0].source, "live");
+  assert.equal(projects[0].projectId, "project_004");
+  assert.equal(projects[0].approvals.script, "pending");
+  assert.equal(projects[0].approvals.final, "pending");
+});
