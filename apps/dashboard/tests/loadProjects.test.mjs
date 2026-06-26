@@ -4,7 +4,7 @@ import {tmpdir} from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import {loadDashboardProjects} from "../src/data/loadProjects.js";
+import {loadDashboardProjects, readOptionalJson} from "../src/data/loadProjects.js";
 
 test("falls back to demo project when projects directory is missing", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "dashboard-missing-"));
@@ -128,4 +128,73 @@ test("keeps live project when optional approvals json is malformed", async () =>
   assert.equal(projects[0].projectId, "project_004");
   assert.equal(projects[0].approvals.script, "pending");
   assert.equal(projects[0].approvals.final, "pending");
+});
+
+test("defaults malformed optional json sections without dropping the project", async () => {
+  const cases = [
+    {
+      label: "scenes",
+      filePath: ["scenes", "scenes.json"],
+      verify(project) {
+        assert.deepEqual(project.scenes, []);
+      },
+    },
+    {
+      label: "approvals",
+      filePath: ["reports", "approvals.json"],
+      verify(project) {
+        assert.equal(project.approvals.script, "pending");
+        assert.equal(project.approvals.final, "pending");
+      },
+    },
+    {
+      label: "quality",
+      filePath: ["reports", "quality_report.json"],
+      verify(project) {
+        assert.equal(project.quality.score, null);
+        assert.deepEqual(project.quality.issues, []);
+        assert.equal(project.quality.videoPath, null);
+      },
+    },
+  ];
+
+  for (const {label, filePath, verify} of cases) {
+    const root = await mkdtemp(path.join(tmpdir(), `dashboard-malformed-${label}-`));
+    const projectDir = path.join(root, "projects", `project_${label}`);
+    await mkdir(path.dirname(path.join(projectDir, ...filePath)), {recursive: true});
+    await writeFile(
+      path.join(projectDir, "metadata.json"),
+      JSON.stringify({
+        project_id: `project_${label}`,
+        topic: "A river spirit teaches patience",
+        status: "final_changes_requested",
+        target_duration_seconds: 180,
+        target_language: "th",
+      }),
+    );
+    await writeFile(path.join(projectDir, ...filePath), "{");
+
+    const projects = await loadDashboardProjects(path.join(root, "projects"));
+
+    assert.equal(projects.length, 1);
+    assert.equal(projects[0].source, "live");
+    assert.equal(projects[0].projectId, `project_${label}`);
+    verify(projects[0]);
+  }
+});
+
+test("surfaces unexpected optional json read errors", async () => {
+  await assert.rejects(
+    () =>
+      readOptionalJson(
+        "ignored.json",
+        {},
+        async () => {
+          const error = new Error("unexpected optional read failure");
+          error.code = "EACCES";
+          throw error;
+        },
+      ),
+    /unexpected optional read failure/,
+  );
 });

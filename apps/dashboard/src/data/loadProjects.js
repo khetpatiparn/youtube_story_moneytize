@@ -25,11 +25,19 @@ async function readJson(filePath) {
   return JSON.parse(raw);
 }
 
-async function readOptionalJson(filePath, fallback) {
+function isToleratedJsonError(error) {
+  return error?.code === "ENOENT" || error instanceof SyntaxError;
+}
+
+export async function readOptionalJson(filePath, fallback, readJsonFn = readJson) {
   try {
-    return await readJson(filePath);
-  } catch {
-    return fallback;
+    return await readJsonFn(filePath);
+  } catch (error) {
+    if (isToleratedJsonError(error)) {
+      return fallback;
+    }
+
+    throw error;
   }
 }
 
@@ -75,11 +83,11 @@ async function loadProject(projectDir) {
   try {
     metadata = await readJson(metadataPath);
   } catch (error) {
-    if (error?.code === "ENOENT") {
+    if (isToleratedJsonError(error)) {
       return null;
     }
 
-    return null;
+    throw error;
   }
   const projectId = metadata.project_id ?? metadata.projectId ?? path.basename(projectDir);
 
@@ -114,7 +122,7 @@ async function loadProject(projectDir) {
       projectReportPath: "reports/project_report.md",
       qualityReportPath: "reports/quality_report.json",
     },
-  }
+  };
 }
 
 export async function loadDashboardProjects(projectsDir = path.resolve("projects")) {
