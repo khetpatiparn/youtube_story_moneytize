@@ -30,6 +30,7 @@ data/checkpoints.sqlite
 data/checkpoints.sqlite-*
 data/cache/
 apps/renderer/public/projects/
+apps/dashboard/public/dashboard-data.json
 output/
 renders/
 *.mp4
