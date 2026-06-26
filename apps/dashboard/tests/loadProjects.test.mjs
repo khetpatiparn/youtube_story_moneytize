@@ -198,3 +198,24 @@ test("surfaces unexpected optional json read errors", async () => {
     /unexpected optional read failure/,
   );
 });
+
+test("loadDashboardProjects rejects when an optional file hits an unexpected filesystem error", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "dashboard-loader-fs-error-"));
+  const projectDir = path.join(root, "projects", "project_006");
+  await mkdir(path.join(projectDir, "reports", "approvals.json"), {recursive: true});
+  await writeFile(
+    path.join(projectDir, "metadata.json"),
+    JSON.stringify({
+      project_id: "project_006",
+      topic: "A river spirit teaches patience",
+      status: "final_changes_requested",
+      target_duration_seconds: 180,
+      target_language: "th",
+    }),
+  );
+
+  await assert.rejects(
+    () => loadDashboardProjects(path.join(root, "projects")),
+    (error) => Boolean(error),
+  );
+});

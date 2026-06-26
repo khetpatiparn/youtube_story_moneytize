@@ -163,9 +163,11 @@ export async function loadDashboardProjects(projectsDir = path.resolve("projects
         projects.push(project);
       }
     } catch (error) {
-      if (error?.code !== "ENOENT") {
+      if (error?.code === "ENOENT") {
         continue;
       }
+
+      throw error;
     }
   }
 
