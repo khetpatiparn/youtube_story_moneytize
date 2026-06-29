@@ -86,6 +86,8 @@ class PipelineRunner:
         state["current_node"] = f"{stage}_approval"
         if approved:
             state.pop("waiting_for", None)
+        else:
+            state["waiting_for"] = stage
         return state
 
 

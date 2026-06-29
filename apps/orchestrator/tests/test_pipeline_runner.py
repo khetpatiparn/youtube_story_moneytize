@@ -210,6 +210,57 @@ class PipelineRunnerTests(unittest.TestCase):
                 )
             self.assertFalse((projects.project_dir("project_001") / "reports" / "approvals.json").exists())
 
+    def test_reversing_script_approval_restores_script_pause(self):
+        from app.services.approval_reporting import ApprovalReportingService, ApprovalRequest
+        from app.services.pipeline_runner import PipelineRunner
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            projects, checkpoints = self._setup(temp_dir)
+            PipelineRunner(projects, checkpoints).run("project_001")
+            ApprovalReportingService(projects, checkpoints).record_script_approval(
+                ApprovalRequest("project_001", True, "human")
+            )
+            ApprovalReportingService(projects, checkpoints).record_script_approval(
+                ApprovalRequest("project_001", False, "human", "Revise the ending")
+            )
+
+            state = PipelineRunner(projects, checkpoints).run("project_001")
+            self.assertEqual(state["status"], "script_changes_requested")
+            self.assertEqual(state["current_node"], "script_approval")
+            self.assertEqual(state["waiting_for"], "script")
+            self.assertEqual(checkpoints.load_latest("project_001").state, state)
+            self.assertEqual(projects.load_project("project_001").status, state["status"])
+
+    def test_reversing_final_approval_restores_final_pause(self):
+        from app.services.approval_reporting import ApprovalReportingService, ApprovalRequest
+        from app.services.pipeline_runner import PipelineRunner
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            projects, checkpoints = self._setup(temp_dir)
+            state = PipelineRunner(projects, checkpoints).run("project_001")
+            checkpoints.save_checkpoint(
+                "project_001",
+                {
+                    **state,
+                    "status": "awaiting_final_approval",
+                    "current_node": "final_approval",
+                    "waiting_for": "final",
+                },
+            )
+            ApprovalReportingService(projects, checkpoints).record_final_approval(
+                ApprovalRequest("project_001", True, "human")
+            )
+            ApprovalReportingService(projects, checkpoints).record_final_approval(
+                ApprovalRequest("project_001", False, "human", "Fix audio balance")
+            )
+
+            state = PipelineRunner(projects, checkpoints).resume("project_001")
+            self.assertEqual(state["status"], "final_changes_requested")
+            self.assertEqual(state["current_node"], "final_approval")
+            self.assertEqual(state["waiting_for"], "final")
+            self.assertEqual(checkpoints.load_latest("project_001").state, state)
+            self.assertEqual(projects.load_project("project_001").status, state["status"])
+
 
 if __name__ == "__main__":
     unittest.main()
