@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from app.repositories.checkpoint_repository import CheckpointRepository
 from app.repositories.project_repository import ProjectRepository
 
 
@@ -59,11 +60,20 @@ class ReportPaths:
 
 
 class ApprovalReportingService:
-    def __init__(self, repository: ProjectRepository):
+    def __init__(
+        self,
+        repository: ProjectRepository,
+        checkpoints: CheckpointRepository | None = None,
+    ):
         self.repository = repository
+        self.checkpoints = checkpoints
 
     def record_script_approval(self, request: ApprovalRequest) -> ApprovalDecision:
+        checkpoint = self._validate_checkpoint_gate(request.project_id, "script")
         decision = self._record_approval("script", request)
+        if checkpoint is not None:
+            self._reconcile_checkpoint(request.project_id, checkpoint.state)
+            return decision
         metadata = self.repository.load_project(request.project_id).with_status(
             "script_approved" if request.approved else "script_changes_requested",
             current_node="script_approval",
@@ -72,13 +82,37 @@ class ApprovalReportingService:
         return decision
 
     def record_final_approval(self, request: ApprovalRequest) -> ApprovalDecision:
+        checkpoint = self._validate_checkpoint_gate(request.project_id, "final")
         decision = self._record_approval("final", request)
+        if checkpoint is not None:
+            self._reconcile_checkpoint(request.project_id, checkpoint.state)
+            return decision
         metadata = self.repository.load_project(request.project_id).with_status(
             "final_approved" if request.approved else "final_changes_requested",
             current_node="final_approval",
         )
         self.repository.save_project(metadata)
         return decision
+
+    def _validate_checkpoint_gate(self, project_id: str, stage: str):
+        if self.checkpoints is None:
+            return None
+        checkpoint = self.checkpoints.load_latest(project_id)
+        if checkpoint is None:
+            return None
+        from app.services.pipeline_runner import approval_stage_is_eligible
+
+        if not approval_stage_is_eligible(checkpoint.state, stage):
+            raise ValueError(f"{stage} approval is only allowed at the {stage} approval gate")
+        return checkpoint
+
+    def _reconcile_checkpoint(self, project_id: str, state) -> None:
+        from app.services.pipeline_runner import PipelineRunner
+
+        assert self.checkpoints is not None
+        PipelineRunner(self.repository, self.checkpoints).reconcile_approval_only(
+            project_id, state
+        )
 
     def write_project_reports(self, request: ReportRequest) -> ReportPaths:
         if not 0 <= request.quality_score <= 1:

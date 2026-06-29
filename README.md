@@ -1,22 +1,35 @@
 # YouTube Story Automation
 
-POC for a recoverable YouTube story automation workflow. The current build includes the repo baseline, a Python orchestrator skeleton, SQLite checkpoint/resume support, deterministic fake provider contracts, static approval/reporting artifacts, and a static Remotion renderer.
+POC for a recoverable YouTube story automation workflow. The local path now runs end to end without API credentials: deterministic content, SVG scenes, WAV narration, SQLite checkpoints, two human approval gates, runtime Remotion rendering, media QA reports, and the read-only dashboard.
 
 ## Current Orchestrator Commands
 
 ```powershell
 $env:PYTHONPATH='apps/orchestrator/src'
 python -m unittest discover apps/orchestrator/tests
-python -m app create --topic "A river spirit teaches patience" --duration 180 --profile simple_story_th
-python -m app status --project-id project_001
-python -m app run --project-id project_001 --checkpoint-db ./data/checkpoints.sqlite
-python -m app resume --project-id project_001 --checkpoint-db ./data/checkpoints.sqlite
-python -m app approve-script --project-id project_001 --approved --reviewer human --notes "Script ready"
-python -m app approve-final --project-id project_001 --changes-requested --reviewer human --notes "Adjust audio"
+python -m app create --project-id sample_story --topic "A river spirit teaches patience" --duration 30 --profile simple_story_th
+python -m app run --project-id sample_story --checkpoint-db ./data/checkpoints.sqlite
+python -m app approve-script --project-id sample_story --approved --reviewer human --checkpoint-db ./data/checkpoints.sqlite
+python -m app resume --project-id sample_story --checkpoint-db ./data/checkpoints.sqlite
+python -m app approve-final --project-id sample_story --approved --reviewer human --checkpoint-db ./data/checkpoints.sqlite
+python -m app resume --project-id sample_story --checkpoint-db ./data/checkpoints.sqlite
+python -m app status --project-id sample_story
 python -m app report --project-id project_001 --video-path render/story.mp4 --quality-score 0.91 --issue "No final approval yet"
 ```
 
-Generated project runtime data goes under `projects/`; checkpoint data goes under `data/`. Approval decisions, contact sheets, quality reports, and project reports are written under `projects/{project_id}/reports/`.
+The first `run` stops at script approval. The first `resume` after approval generates images and narration, renders the MP4, validates it, writes reports, and stops at final approval. The last `resume` changes the project to `completed`. Use `--tts-words-per-second 1000` on `resume` only for a fast one-second smoke render; the normal default is `2.5`.
+
+Generated runtime data goes under `projects/{project_id}/`: outline and script in `content/`, scene JSON in `scenes/`, SVGs in `images/`, WAV in `audio/`, payload and MP4 in `render/`, and approvals/quality/contact/project reports in `reports/`. Checkpoint data goes under `data/`.
+
+Resume is idempotent. Completed images, audio, renders, and reports are fingerprinted or validated before reuse. A failed render remains at `render_ready`; fix the cause and run `resume` again. Image retry is limited to three total attempts per failed scene by default (`--max-image-attempts` changes the bound).
+
+## Local Provider Limitations
+
+- Story content is deterministic template output, not a production LLM response.
+- Images are deterministic SVG review assets, not production illustrations or character-consistent art.
+- Narration is synthetic tones in a valid WAV, not natural speech.
+- External LLM, image, and TTS adapters still require implementation, credentials, quota handling, and provider-specific validation.
+- YouTube upload, publishing, analytics, and fully autonomous operation are not implemented.
 
 ## Current Renderer Commands
 
@@ -26,7 +39,7 @@ npm.cmd run test:renderer
 npm.cmd run render:sample
 ```
 
-The sample renderer reads `apps/renderer/sample/render_payload.json` and writes `renders/sample.mp4`. Render outputs are ignored by Git.
+The static sample command reads `apps/renderer/sample/render_payload.json`. The orchestrator uses runtime props and stages validated project assets before writing `projects/{project_id}/render/story.mp4`. Render outputs are ignored by Git.
 
 ## Current Dashboard Commands
 

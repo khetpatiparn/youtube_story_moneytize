@@ -13,12 +13,15 @@ class VideoProjectState(TypedDict, total=False):
     target_language: str
     channel_style_profile: str
     outline: dict[str, Any]
+    outline_path: str | None
     outline_review: dict[str, Any]
     script: str
+    script_path: str | None
     script_version: int
     script_review: dict[str, Any]
     script_approved: bool
     scenes: list[dict[str, Any]]
+    scenes_path: str | None
     scene_count: int
     image_budget: dict[str, Any]
     image_jobs: list[dict[str, Any]]
@@ -34,4 +37,5 @@ class VideoProjectState(TypedDict, total=False):
     quality_report: dict[str, Any]
     final_approved: bool
     current_node: str | None
+    waiting_for: str | None
     retry_counts: dict[str, int]

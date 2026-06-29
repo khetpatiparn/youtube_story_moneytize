@@ -91,7 +91,10 @@ function normalizeQuality(report) {
 }
 
 async function loadProject(projectDir) {
-  const metadataPath = path.join(projectDir, "metadata.json");
+  const metadataPath = await findMetadataPath(projectDir);
+  if (!metadataPath) {
+    return null;
+  }
   let metadata;
   try {
     metadata = await readJson(metadataPath);
@@ -143,6 +146,21 @@ async function loadProject(projectDir) {
   };
 }
 
+async function findMetadataPath(projectDir) {
+  for (const filename of ["project.json", "metadata.json"]) {
+    const candidate = path.join(projectDir, filename);
+    try {
+      await access(candidate);
+      return candidate;
+    } catch (error) {
+      if (error?.code !== "ENOENT") {
+        throw error;
+      }
+    }
+  }
+  return null;
+}
+
 export async function loadDashboardProjects(projectsDir = path.resolve("projects")) {
   try {
     await access(projectsDir);
@@ -174,8 +192,6 @@ export async function loadDashboardProjects(projectsDir = path.resolve("projects
   const projects = [];
   for (const projectDir of projectDirs) {
     try {
-      const metadataPath = path.join(projectDir, "metadata.json");
-      await access(metadataPath);
       const project = await loadProject(projectDir);
       if (project) {
         projects.push(project);

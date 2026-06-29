@@ -3,10 +3,10 @@ from __future__ import annotations
 import argparse
 import json
 import os
+from functools import partial
 from pathlib import Path
 from typing import Sequence
 
-from app.graph.workflow import build_hello_world_graph
 from app.repositories.checkpoint_repository import CheckpointRepository
 from app.repositories.project_repository import ProjectRepository
 from app.schemas.project import CreateProjectRequest
@@ -15,6 +15,9 @@ from app.services.approval_reporting import (
     ApprovalRequest,
     ReportRequest,
 )
+from app.services.pipeline_runner import PipelineRunner
+from app.services.quality import ffprobe_duration
+from app.services.rendering import RemotionRenderer
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -55,15 +58,19 @@ def _build_parser() -> argparse.ArgumentParser:
     status.add_argument("--project-id", required=True)
     status.add_argument("--projects-dir", default="./projects")
 
-    run = subparsers.add_parser("run", help="Run the hello-world graph")
+    run = subparsers.add_parser("run", help="Run the content pipeline")
     run.add_argument("--project-id", required=True)
     run.add_argument("--projects-dir", default="./projects")
     run.add_argument("--checkpoint-db", default=_default_checkpoint_db())
+    run.add_argument("--max-image-attempts", type=int, default=3)
+    run.add_argument("--tts-words-per-second", type=float, default=2.5)
 
     resume = subparsers.add_parser("resume", help="Resume project state from checkpoint")
     resume.add_argument("--project-id", required=True)
     resume.add_argument("--projects-dir", default="./projects")
     resume.add_argument("--checkpoint-db", default=_default_checkpoint_db())
+    resume.add_argument("--max-image-attempts", type=int, default=3)
+    resume.add_argument("--tts-words-per-second", type=float, default=2.5)
 
     approve_script = subparsers.add_parser("approve-script", help="Record script approval")
     _add_approval_arguments(approve_script)
@@ -101,41 +108,35 @@ def _show_status(args: argparse.Namespace) -> int:
 
 
 def _run_project(args: argparse.Namespace) -> int:
-    repository = ProjectRepository(Path(args.projects_dir))
-    checkpoints = CheckpointRepository(Path(args.checkpoint_db))
-    metadata = repository.load_project(args.project_id)
-    graph = build_hello_world_graph()
-    result = graph.invoke(metadata.to_graph_state())
-    checkpoints.save_checkpoint(args.project_id, result)
-    metadata = metadata.with_graph_result(result)
-    repository.save_project(metadata)
-    print(json.dumps(metadata.to_dict(), ensure_ascii=False))
+    result = _build_pipeline_runner(args).run(args.project_id)
+    print(json.dumps(result, ensure_ascii=False))
     return 0
 
 
 def _resume_project(args: argparse.Namespace) -> int:
-    repository = ProjectRepository(Path(args.projects_dir))
-    checkpoints = CheckpointRepository(Path(args.checkpoint_db))
-    checkpoint = checkpoints.load_latest(args.project_id)
-    if checkpoint is None:
-        raise SystemExit(f"No checkpoint found for project_id {args.project_id}")
-
-    metadata = repository.load_project(args.project_id)
-    metadata = metadata.with_graph_result(checkpoint.state)
-    repository.save_project(metadata)
-    print(json.dumps(metadata.to_dict(), ensure_ascii=False))
+    try:
+        result = _build_pipeline_runner(args).resume(args.project_id)
+    except ValueError as error:
+        raise SystemExit(str(error)) from error
+    print(json.dumps(result, ensure_ascii=False))
     return 0
 
 
 def _record_script_approval(args: argparse.Namespace) -> int:
-    service = ApprovalReportingService(ProjectRepository(Path(args.projects_dir)))
+    service = ApprovalReportingService(
+        ProjectRepository(Path(args.projects_dir)),
+        CheckpointRepository(Path(args.checkpoint_db)),
+    )
     decision = service.record_script_approval(_approval_request_from_args(args))
     print(json.dumps(decision.to_dict(), ensure_ascii=False))
     return 0
 
 
 def _record_final_approval(args: argparse.Namespace) -> int:
-    service = ApprovalReportingService(ProjectRepository(Path(args.projects_dir)))
+    service = ApprovalReportingService(
+        ProjectRepository(Path(args.projects_dir)),
+        CheckpointRepository(Path(args.checkpoint_db)),
+    )
     decision = service.record_final_approval(_approval_request_from_args(args))
     print(json.dumps(decision.to_dict(), ensure_ascii=False))
     return 0
@@ -158,6 +159,7 @@ def _write_project_report(args: argparse.Namespace) -> int:
 def _add_approval_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--project-id", required=True)
     parser.add_argument("--projects-dir", default="./projects")
+    parser.add_argument("--checkpoint-db", default=_default_checkpoint_db())
     approval = parser.add_mutually_exclusive_group(required=True)
     approval.add_argument("--approved", action="store_true")
     approval.add_argument("--changes-requested", action="store_true")
@@ -176,3 +178,19 @@ def _approval_request_from_args(args: argparse.Namespace) -> ApprovalRequest:
 
 def _default_checkpoint_db() -> str:
     return os.environ.get("CHECKPOINT_DB", "./data/checkpoints.sqlite")
+
+
+def _build_pipeline_runner(args: argparse.Namespace) -> PipelineRunner:
+    repository = ProjectRepository(Path(args.projects_dir))
+    checkpoints = CheckpointRepository(Path(args.checkpoint_db))
+    repository_root = Path(__file__).resolve().parents[5]
+    project_dir = repository.project_dir(args.project_id)
+    renderer = RemotionRenderer(repository_root, project_dir, args.project_id)
+    return PipelineRunner(
+        repository,
+        checkpoints,
+        renderer=renderer,
+        video_probe=partial(ffprobe_duration, repository_root=repository_root),
+        max_image_attempts=args.max_image_attempts,
+        tts_words_per_second=args.tts_words_per_second,
+    )

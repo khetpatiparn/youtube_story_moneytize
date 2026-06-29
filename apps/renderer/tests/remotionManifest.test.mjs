@@ -21,7 +21,10 @@ test("remotion entry registers the YouTubeStory composition", async () => {
 
   assert.match(entry, /registerRoot\(RemotionRoot\)/);
   assert.match(entry, /id="YouTubeStory"/);
-  assert.match(entry, /durationInFrames={calculatedFrames}/);
+  assert.match(entry, /calculateMetadata/);
+  assert.match(entry, /props.*validateRenderPayload/s);
+  assert.match(entry, /durationInFrames: calculateDurationInFrames/);
+  assert.match(entry, /<Audio src={staticFile\(audioPath\)} \/>/);
   assert.match(entry, /defaultProps={renderPayload}/);
   assert.match(entry, /useCurrentFrame\(\)/);
   assert.match(entry, /getMotionStyle\(scene\.motion, frame,/);
