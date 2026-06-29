@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import json
+import math
 from typing import Any
 
+from app.providers.base import AudioResult
 from app.providers.local import LocalImageProvider, LocalTTSProvider
 from app.repositories.checkpoint_repository import CheckpointRepository
 from app.repositories.project_repository import ProjectRepository
@@ -98,13 +101,27 @@ class PipelineRunner:
         try:
             duration = wav_duration_seconds(audio_path)
         except ValueError:
+            self._remove_payload(store)
             provider = self.tts_provider or LocalTTSProvider(store)
-            result = provider.synthesize_sync(
-                state["script"], "narrator-th", audio_relative, {"words_per_second": 2.5}
+            result = self._synthesize(
+                provider, state["script"], "narrator-th", audio_relative
             )
-            duration = wav_duration_seconds(store.path(result.output_path))
+            self._validate_audio_result(store, result, audio_relative)
+            duration = wav_duration_seconds(store.path(audio_relative))
+            if not math.isclose(result.duration_seconds, duration, rel_tol=0, abs_tol=1 / 22050):
+                raise ValueError("TTS result duration does not match the generated WAV")
 
-        timeline = build_timeline(state["scenes"], duration, fps=30)
+        scenes = state.get("scenes")
+        images = state.get("generated_images")
+        try:
+            scene_ids = self._validate_scene_ids(scenes)
+            timeline = build_timeline(scenes, duration, fps=30)
+            timings, image_by_scene = self._validate_payload_inputs(
+                store, scene_ids, timeline, images
+            )
+        except ValueError:
+            self._remove_payload(store)
+            raise
         payload = {
             "fps": 30,
             "width": 1280,
@@ -119,9 +136,9 @@ class PipelineRunner:
                     "motion": scene.get("motion", "slow_push"),
                     "focalPoint": scene.get("focal_point", [0.5, 0.5]),
                 }
-                for scene, timing, image in zip(
-                    state["scenes"], timeline, state["generated_images"]
-                )
+                for scene in scenes
+                for timing in [timings[scene["scene_id"]]]
+                for image in [image_by_scene[scene["scene_id"]]]
             ],
         }
         payload_relative = "render/render_payload.json"
@@ -139,6 +156,99 @@ class PipelineRunner:
             }
         )
         return state
+
+    @staticmethod
+    def _synthesize(provider: Any, text: str, voice_id: str, output_path: str) -> AudioResult:
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            pass
+        else:
+            raise RuntimeError("PipelineRunner cannot synthesize TTS inside a running event loop")
+        result = asyncio.run(
+            provider.synthesize(text, voice_id, output_path, {"words_per_second": 2.5})
+        )
+        if not isinstance(result, AudioResult):
+            raise TypeError("TTS provider synthesize must return AudioResult")
+        return result
+
+    @staticmethod
+    def _validate_audio_result(
+        store: ArtifactStore, result: AudioResult, expected_path: str
+    ) -> None:
+        if result.status != "completed":
+            raise ValueError("TTS result status must be completed")
+        if not math.isfinite(result.duration_seconds) or result.duration_seconds <= 0:
+            raise ValueError("TTS result duration must be finite and positive")
+        if result.output_path != expected_path:
+            raise ValueError("TTS result output_path must match the requested project path")
+        store.path(result.output_path)
+
+    @staticmethod
+    def _validate_scene_ids(scenes: Any) -> list[str]:
+        if not isinstance(scenes, list) or not scenes:
+            raise ValueError("scenes must be a nonempty list")
+        scene_ids: list[str] = []
+        for scene in scenes:
+            scene_id = scene.get("scene_id") if isinstance(scene, dict) else None
+            if not isinstance(scene_id, str) or not scene_id:
+                raise ValueError("each scene must have a nonempty scene_id")
+            if scene_id in scene_ids:
+                raise ValueError(f"duplicate scene_id: {scene_id}")
+            scene_ids.append(scene_id)
+        return scene_ids
+
+    @staticmethod
+    def _validate_payload_inputs(
+        store: ArtifactStore,
+        scene_ids: list[str],
+        timeline: Any,
+        images: Any,
+    ) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
+        expected = set(scene_ids)
+        if not isinstance(timeline, list):
+            raise ValueError("timeline must be a list")
+        timings: dict[str, dict[str, Any]] = {}
+        for timing in timeline:
+            timing_id = timing.get("scene_id") if isinstance(timing, dict) else None
+            if timing_id in timings:
+                raise ValueError(f"duplicate timeline scene_id: {timing_id}")
+            if timing_id not in expected:
+                raise ValueError(f"unknown timeline scene_id: {timing_id}")
+            timings[timing_id] = timing
+        missing_timeline = sorted(expected - timings.keys())
+        if missing_timeline:
+            raise ValueError(f"missing timeline scenes: {', '.join(missing_timeline)}")
+
+        if not isinstance(images, list):
+            raise ValueError("generated_images must be a list")
+        image_by_scene: dict[str, dict[str, Any]] = {}
+        for image in images:
+            image_id = image.get("scene_id") if isinstance(image, dict) else None
+            if image_id in image_by_scene:
+                raise ValueError(f"duplicate generated image scene_id: {image_id}")
+            if image_id not in expected:
+                raise ValueError(f"unknown generated image scene_id: {image_id}")
+            output_path = image.get("output_path")
+            if not isinstance(output_path, str) or not output_path:
+                raise ValueError(f"generated image for {image_id} has invalid output_path")
+            try:
+                contained = store.path(output_path)
+            except (TypeError, ValueError) as error:
+                raise ValueError(
+                    f"generated image for {image_id} has invalid output_path"
+                ) from error
+            if not contained.is_file():
+                raise ValueError(f"generated image for {image_id} output is missing")
+            image_by_scene[image_id] = image
+        missing_images = sorted(expected - image_by_scene.keys())
+        if missing_images:
+            raise ValueError(f"missing generated images: {', '.join(missing_images)}")
+        return timings, image_by_scene
+
+    @staticmethod
+    def _remove_payload(store: ArtifactStore) -> None:
+        store.path("render/render_payload.json").unlink(missing_ok=True)
 
     @staticmethod
     def _payload_matches(store: ArtifactStore, path: str, expected: dict[str, Any]) -> bool:

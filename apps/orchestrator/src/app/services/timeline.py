@@ -14,11 +14,17 @@ def wav_duration_seconds(path: str | Path) -> float:
             rate = audio.getframerate()
             frames = audio.getnframes()
             compression = audio.getcomptype()
+            frame_bytes = audio.readframes(frames)
     except (EOFError, OSError, wave.Error) as error:
         raise ValueError(f"Invalid WAV file: {path}") from error
-    if channels < 1 or sample_width < 1 or rate <= 0 or frames <= 0 or compression != "NONE":
+    if (channels, sample_width, rate, compression) != (1, 2, 22050, "NONE") or frames <= 0:
         raise ValueError(f"Invalid WAV file: {path}")
-    return frames / rate
+    if len(frame_bytes) != frames * channels * sample_width:
+        raise ValueError(f"Invalid truncated WAV file: {path}")
+    duration = frames / rate
+    if not math.isfinite(duration) or duration <= 0:
+        raise ValueError(f"Invalid WAV duration: {path}")
+    return duration
 
 
 def build_timeline(
