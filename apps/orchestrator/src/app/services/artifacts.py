@@ -21,22 +21,26 @@ class ArtifactStore:
         if ".." in relative.parts:
             raise ValueError("Artifact path cannot contain parent traversal")
 
-        resolved = (self.root / relative).resolve()
+        candidate = self.root / relative
+        resolved = candidate.parent.resolve() / candidate.name
+        if candidate.is_symlink():
+            resolved = candidate.resolve()
         if not resolved.is_relative_to(self.root):
             raise ValueError("Artifact path must remain within the project root")
         return resolved
 
-    def _lock_for(self, relative_path: str | Path) -> threading.Lock:
-        relative = Path(relative_path)
-        if relative.is_absolute() or ".." in relative.parts:
-            self.path(relative)
-        key = os.path.normcase(os.path.abspath(self.root / relative))
+    def _destination_and_lock(
+        self, relative_path: str | Path
+    ) -> tuple[Path, threading.Lock]:
+        destination = self.path(relative_path)
+        key = os.path.normcase(str(destination))
         with self._locks_guard:
-            return self._destination_locks.setdefault(key, threading.Lock())
+            lock = self._destination_locks.setdefault(key, threading.Lock())
+        return destination, lock
 
     def write_text(self, relative_path: str | Path, content: str) -> str:
-        with self._lock_for(relative_path):
-            destination = self.path(relative_path)
+        destination, lock = self._destination_and_lock(relative_path)
+        with lock:
             destination.parent.mkdir(parents=True, exist_ok=True)
             temporary_path = None
             try:

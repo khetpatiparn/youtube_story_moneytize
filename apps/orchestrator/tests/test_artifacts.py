@@ -84,6 +84,19 @@ class ArtifactStoreTests(unittest.TestCase):
             script_dir = store.root / "script"
             self.assertEqual(list(script_dir.glob("*tmp*")), [])
 
+    def test_resolved_destination_aliases_share_one_lock(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = ArtifactStore(Path(temp_dir) / "project_001")
+            destination = store.root / "script" / "story.md"
+
+            with patch.object(store, "path", return_value=destination):
+                first_destination, first_lock = store._destination_and_lock("script/story.md")
+                second_destination, second_lock = store._destination_and_lock("alias/story.md")
+
+            self.assertEqual(first_destination, destination)
+            self.assertEqual(second_destination, destination)
+            self.assertIs(first_lock, second_lock)
+
 
 if __name__ == "__main__":
     unittest.main()
