@@ -25,6 +25,19 @@ async function readJson(filePath) {
   return JSON.parse(raw);
 }
 
+async function availableRelativePath(projectDir, relativePath) {
+  try {
+    await access(path.join(projectDir, ...relativePath));
+    return relativePath.join("/");
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return null;
+    }
+
+    throw error;
+  }
+}
+
 function isToleratedJsonError(error) {
   return error?.code === "ENOENT" || error instanceof SyntaxError;
 }
@@ -106,6 +119,11 @@ async function loadProject(projectDir) {
 
   const qualityData = await readOptionalJson(qualityFile, null);
   const quality = normalizeQuality(qualityData);
+  const [contactSheetReport, projectReport, qualityReport] = await Promise.all([
+    availableRelativePath(projectDir, ["reports", "contact_sheet.md"]),
+    availableRelativePath(projectDir, ["reports", "project_report.md"]),
+    availableRelativePath(projectDir, qualityReportPath),
+  ]);
 
   return {
     projectId,
@@ -118,9 +136,9 @@ async function loadProject(projectDir) {
     approvals,
     quality,
     reports: {
-      contactSheetPath: "reports/contact_sheet.md",
-      projectReportPath: "reports/project_report.md",
-      qualityReportPath: "reports/quality_report.json",
+      contactSheetPath: contactSheetReport,
+      projectReportPath: projectReport,
+      qualityReportPath: qualityReport,
     },
   };
 }

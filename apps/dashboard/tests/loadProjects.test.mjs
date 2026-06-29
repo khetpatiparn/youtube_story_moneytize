@@ -90,6 +90,9 @@ test("handles missing optional reports without throwing", async () => {
   assert.equal(projects[0].quality.score, null);
   assert.deepEqual(projects[0].quality.issues, []);
   assert.deepEqual(projects[0].scenes, []);
+  assert.equal(projects[0].reports.contactSheetPath, null);
+  assert.equal(projects[0].reports.projectReportPath, null);
+  assert.equal(projects[0].reports.qualityReportPath, null);
 });
 
 test("falls back to demo project when metadata is malformed", async () => {
