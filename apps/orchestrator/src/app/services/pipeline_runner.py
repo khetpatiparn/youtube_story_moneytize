@@ -29,6 +29,8 @@ class PipelineRunner:
         tts_provider: Any = None,
         renderer: Any = None,
         video_probe: Any = None,
+        max_image_attempts: int = 3,
+        tts_words_per_second: float = 2.5,
     ) -> None:
         self.projects = projects
         self.checkpoints = checkpoints
@@ -36,6 +38,18 @@ class PipelineRunner:
         self.tts_provider = tts_provider
         self.renderer = renderer
         self.video_probe = video_probe
+        if (
+            isinstance(max_image_attempts, bool)
+            or not isinstance(max_image_attempts, int)
+            or max_image_attempts <= 0
+        ):
+            raise ValueError("max_image_attempts must be a positive integer")
+        self.max_image_attempts = max_image_attempts
+        if not isinstance(tts_words_per_second, (int, float)) or not math.isfinite(
+            tts_words_per_second
+        ) or tts_words_per_second <= 0:
+            raise ValueError("tts_words_per_second must be finite and positive")
+        self.tts_words_per_second = float(tts_words_per_second)
 
     def run(self, project_id: str) -> VideoProjectState:
         metadata = self.projects.load_project(project_id)
@@ -75,7 +89,9 @@ class PipelineRunner:
             store = ArtifactStore(self.projects.project_dir(project_id))
             provider = self.image_provider or LocalImageProvider(store)
             try:
-                images = ImagePipeline(store, provider).generate(
+                images = ImagePipeline(
+                    store, provider, max_attempts=self.max_image_attempts
+                ).generate(
                     state["scenes"], existing_jobs=state.get("image_jobs")
                 )
             except ImageGenerationExhausted as error:
@@ -266,8 +282,9 @@ class PipelineRunner:
         )
         return state
 
-    @staticmethod
-    def _synthesize(provider: Any, text: str, voice_id: str, output_path: str) -> AudioResult:
+    def _synthesize(
+        self, provider: Any, text: str, voice_id: str, output_path: str
+    ) -> AudioResult:
         try:
             asyncio.get_running_loop()
         except RuntimeError:
@@ -275,7 +292,12 @@ class PipelineRunner:
         else:
             raise RuntimeError("PipelineRunner cannot synthesize TTS inside a running event loop")
         result = asyncio.run(
-            provider.synthesize(text, voice_id, output_path, {"words_per_second": 2.5})
+            provider.synthesize(
+                text,
+                voice_id,
+                output_path,
+                {"words_per_second": self.tts_words_per_second},
+            )
         )
         if not isinstance(result, AudioResult):
             raise TypeError("TTS provider synthesize must return AudioResult")

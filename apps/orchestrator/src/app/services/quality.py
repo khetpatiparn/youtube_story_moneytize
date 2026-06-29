@@ -226,12 +226,23 @@ def _contained(root: Path, relative: Any) -> Path | None:
     return resolved if root in resolved.parents else None
 
 
-def _ffprobe_duration(video_path: Path) -> float:
-    executable = _find_ffprobe(video_path)
+def ffprobe_duration(video_path: Path, repository_root: Path | None = None) -> float:
+    executable = _find_ffprobe(video_path, repository_root)
     if not executable:
         raise RuntimeError("ffprobe is unavailable")
     result = subprocess.run(
-        [executable, "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", str(video_path)],
+        [
+            executable,
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            str(video_path),
+        ],
         capture_output=True,
         text=True,
         timeout=15,
@@ -242,11 +253,18 @@ def _ffprobe_duration(video_path: Path) -> float:
     return float(result.stdout[:100].strip())
 
 
-def _find_ffprobe(video_path: Path) -> str | None:
+def _ffprobe_duration(video_path: Path) -> float:
+    return ffprobe_duration(video_path)
+
+
+def _find_ffprobe(video_path: Path, repository_root: Path | None = None) -> str | None:
     executable = shutil.which("ffprobe")
     if executable:
         return executable
-    for ancestor in [video_path.parent, *video_path.parents]:
+    ancestors = [video_path.parent, *video_path.parents]
+    if repository_root is not None:
+        ancestors.insert(0, Path(repository_root).resolve())
+    for ancestor in ancestors:
         remotion = ancestor / "node_modules" / "@remotion"
         if not remotion.is_dir():
             continue

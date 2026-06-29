@@ -68,6 +68,48 @@ test("loads live project metadata scenes approvals and quality report", async ()
   assert.equal(projects[0].scenes[1].sceneId, "scene_002");
 });
 
+test("loads orchestrator project.json metadata", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "dashboard-project-json-"));
+  const projectDir = path.join(root, "projects", "sample_story");
+  await mkdir(path.join(projectDir, "scenes"), {recursive: true});
+  await mkdir(path.join(projectDir, "reports"), {recursive: true});
+  await writeFile(
+    path.join(projectDir, "project.json"),
+    JSON.stringify({
+      project_id: "sample_story",
+      topic: "River",
+      status: "completed",
+      target_duration_seconds: 30,
+      target_language: "th",
+    }),
+  );
+  await writeFile(
+    path.join(projectDir, "scenes", "scenes.json"),
+    JSON.stringify([{scene_id: "scene_001", image_path: "images/scene_001.svg", prompt: "River"}]),
+  );
+  await writeFile(
+    path.join(projectDir, "reports", "approvals.json"),
+    JSON.stringify({script: {approved: true}, final: {approved: true}}),
+  );
+  await writeFile(
+    path.join(projectDir, "reports", "quality_report.json"),
+    JSON.stringify({quality_score: 1, issues: [], video_path: "render/story.mp4"}),
+  );
+  await writeFile(path.join(projectDir, "reports", "contact_sheet.md"), "# Contact Sheet\n");
+  await writeFile(path.join(projectDir, "reports", "project_report.md"), "# Project Report\n");
+
+  const projects = await loadDashboardProjects(path.join(root, "projects"));
+
+  assert.equal(projects.length, 1);
+  assert.equal(projects[0].source, "live");
+  assert.equal(projects[0].projectId, "sample_story");
+  assert.equal(projects[0].status, "completed");
+  assert.equal(projects[0].scenes[0].imagePath, "images/scene_001.svg");
+  assert.equal(projects[0].approvals.final, "approved");
+  assert.equal(projects[0].quality.score, 1);
+  assert.equal(projects[0].reports.projectReportPath, "reports/project_report.md");
+});
+
 test("handles missing optional reports without throwing", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "dashboard-partial-"));
   const projectDir = path.join(root, "projects", "project_002");

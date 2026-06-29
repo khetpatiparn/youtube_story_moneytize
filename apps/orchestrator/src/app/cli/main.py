@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+from functools import partial
 from pathlib import Path
 from typing import Sequence
 
@@ -15,6 +16,8 @@ from app.services.approval_reporting import (
     ReportRequest,
 )
 from app.services.pipeline_runner import PipelineRunner
+from app.services.quality import ffprobe_duration
+from app.services.rendering import RemotionRenderer
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -59,11 +62,15 @@ def _build_parser() -> argparse.ArgumentParser:
     run.add_argument("--project-id", required=True)
     run.add_argument("--projects-dir", default="./projects")
     run.add_argument("--checkpoint-db", default=_default_checkpoint_db())
+    run.add_argument("--max-image-attempts", type=int, default=3)
+    run.add_argument("--tts-words-per-second", type=float, default=2.5)
 
     resume = subparsers.add_parser("resume", help="Resume project state from checkpoint")
     resume.add_argument("--project-id", required=True)
     resume.add_argument("--projects-dir", default="./projects")
     resume.add_argument("--checkpoint-db", default=_default_checkpoint_db())
+    resume.add_argument("--max-image-attempts", type=int, default=3)
+    resume.add_argument("--tts-words-per-second", type=float, default=2.5)
 
     approve_script = subparsers.add_parser("approve-script", help="Record script approval")
     _add_approval_arguments(approve_script)
@@ -101,18 +108,14 @@ def _show_status(args: argparse.Namespace) -> int:
 
 
 def _run_project(args: argparse.Namespace) -> int:
-    repository = ProjectRepository(Path(args.projects_dir))
-    checkpoints = CheckpointRepository(Path(args.checkpoint_db))
-    result = PipelineRunner(repository, checkpoints).run(args.project_id)
+    result = _build_pipeline_runner(args).run(args.project_id)
     print(json.dumps(result, ensure_ascii=False))
     return 0
 
 
 def _resume_project(args: argparse.Namespace) -> int:
-    repository = ProjectRepository(Path(args.projects_dir))
-    checkpoints = CheckpointRepository(Path(args.checkpoint_db))
     try:
-        result = PipelineRunner(repository, checkpoints).resume(args.project_id)
+        result = _build_pipeline_runner(args).resume(args.project_id)
     except ValueError as error:
         raise SystemExit(str(error)) from error
     print(json.dumps(result, ensure_ascii=False))
@@ -175,3 +178,19 @@ def _approval_request_from_args(args: argparse.Namespace) -> ApprovalRequest:
 
 def _default_checkpoint_db() -> str:
     return os.environ.get("CHECKPOINT_DB", "./data/checkpoints.sqlite")
+
+
+def _build_pipeline_runner(args: argparse.Namespace) -> PipelineRunner:
+    repository = ProjectRepository(Path(args.projects_dir))
+    checkpoints = CheckpointRepository(Path(args.checkpoint_db))
+    repository_root = Path(__file__).resolve().parents[5]
+    project_dir = repository.project_dir(args.project_id)
+    renderer = RemotionRenderer(repository_root, project_dir, args.project_id)
+    return PipelineRunner(
+        repository,
+        checkpoints,
+        renderer=renderer,
+        video_probe=partial(ffprobe_duration, repository_root=repository_root),
+        max_image_attempts=args.max_image_attempts,
+        tts_words_per_second=args.tts_words_per_second,
+    )
