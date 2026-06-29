@@ -27,3 +27,14 @@ npm.cmd run render:sample
 ```
 
 The sample renderer reads `apps/renderer/sample/render_payload.json` and writes `renders/sample.mp4`. Render outputs are ignored by Git.
+
+## Current Dashboard Commands
+
+```powershell
+npm.cmd run test:dashboard
+npm.cmd run prepare:dashboard-data
+npm.cmd run dev:dashboard
+npm.cmd run build:dashboard
+```
+
+The Media QA dashboard lives in `apps/dashboard/`. The data export step reads local project data from `projects/{project_id}/` when available and writes `apps/dashboard/public/dashboard-data.json`; when no generated projects exist it writes bundled demo data. The first dashboard slice is read-only.

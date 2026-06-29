@@ -6,6 +6,7 @@ This repo contains `youtube_story_automation_poc_plan.md`, Python orchestrator, 
 - `apps/orchestrator/src/` for graph, nodes, schemas, providers, services, repositories, and CLI.
 - `apps/orchestrator/tests/` for Python tests.
 - `apps/renderer/src/` for Remotion compositions, components, motions, and `index.tsx`.
+- `apps/dashboard/` for the local read-only Media QA web dashboard.
 - `configs/` for prompts, channel profiles, and render profiles.
 - `projects/{project_id}/` for generated assets, approvals, reports, logs, and renders.
 - `data/` for checkpoints and caches.
@@ -22,6 +23,10 @@ Use `$env:PYTHONPATH='apps/orchestrator/src'` unless installed editable.
 - `python -m app report --project-id project_001 --video-path render/story.mp4 --quality-score 0.91` writes reports.
 - `npm.cmd run test:renderer` validates static renderer payloads.
 - `npm.cmd run render:sample` renders `renders/sample.mp4`.
+- `npm.cmd run test:dashboard` validates dashboard data loading and UI contracts.
+- `npm.cmd run prepare:dashboard-data` exports project/report data for the browser dashboard.
+- `npm.cmd run dev:dashboard` starts the local Media QA dashboard.
+- `npm.cmd run build:dashboard` builds the dashboard static bundle.
 
 ## Coding Style & Naming Conventions
 Use Python for orchestration and TypeScript/React for Remotion. Keep one node responsibility per file. Prefer explicit schemas and contracts. Use snake_case in Python and PascalCase for React.
@@ -40,3 +45,5 @@ At feature end, update `AGENTS.md` for new commands, rules, tests, recovery step
 
 ## Security & Config
 Store secrets in `.env` and commit only `.env.example`. Never log keys or tokens. Validate file names, MIME types, sizes, and project paths. Route external operations through reviewed wrappers.
+
+The dashboard is read-only in the first slice; do not add pipeline execution, approval writes, or upload actions without a new goal and tests.
