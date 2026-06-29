@@ -86,9 +86,53 @@ class PipelineRunnerTests(unittest.TestCase):
 
             state = PipelineRunner(projects, checkpoints).resume("project_001")
             self.assertTrue(state["script_approved"])
-            self.assertEqual(state["status"], "script_approved")
-            self.assertEqual(state["current_node"], "script_approval")
+            self.assertEqual(state["status"], "media_ready")
+            self.assertEqual(state["current_node"], "images")
             self.assertNotIn("waiting_for", state)
+
+    def test_approved_script_generates_images_and_checkpoints_media_state(self):
+        from app.services.approval_reporting import ApprovalReportingService, ApprovalRequest
+        from app.services.pipeline_runner import PipelineRunner
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            projects, checkpoints = self._setup(temp_dir)
+            PipelineRunner(projects, checkpoints).run("project_001")
+            ApprovalReportingService(projects, checkpoints).record_script_approval(
+                ApprovalRequest("project_001", True, "human")
+            )
+
+            state = PipelineRunner(projects, checkpoints).resume("project_001")
+
+            self.assertEqual(state["status"], "media_ready")
+            self.assertEqual(state["current_node"], "images")
+            self.assertEqual(state["failed_scene_ids"], [])
+            self.assertEqual(len(state["generated_images"]), state["scene_count"])
+            self.assertEqual(checkpoints.load_latest("project_001").state, state)
+            self.assertTrue((projects.project_dir("project_001") / "images" / "jobs.json").exists())
+
+    def test_image_exhaustion_checkpoints_failed_media_state(self):
+        from app.providers.base import RetryableProviderError
+        from app.services.image_pipeline import ImageGenerationExhausted
+        from app.services.pipeline_runner import PipelineRunner
+
+        class Failure:
+            def generate(self, scene, output_path):
+                raise RetryableProviderError("offline")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            projects, checkpoints = self._setup(temp_dir)
+            PipelineRunner(projects, checkpoints).run("project_001")
+            approvals = projects.project_dir("project_001") / "reports" / "approvals.json"
+            approvals.parent.mkdir(parents=True, exist_ok=True)
+            approvals.write_text(json.dumps({"script": {"approved": True}}), encoding="utf-8")
+            with self.assertRaises(ImageGenerationExhausted):
+                PipelineRunner(projects, checkpoints, image_provider=Failure()).resume("project_001")
+
+            state = checkpoints.load_latest("project_001").state
+            self.assertEqual(state["status"], "image_generation_failed")
+            self.assertNotEqual(state["status"], "media_ready")
+            self.assertTrue(state["failed_scene_ids"])
+            self.assertEqual(state["retry_counts"]["scene_001"], 2)
 
     def test_run_recovers_after_metadata_save_failure(self):
         from app.services.pipeline_runner import PipelineRunner
@@ -147,7 +191,7 @@ class PipelineRunnerTests(unittest.TestCase):
 
             state = PipelineRunner(projects, checkpoints).resume("project_001")
             self.assertTrue(state["script_approved"])
-            self.assertEqual(projects.load_project("project_001").status, "script_approved")
+            self.assertEqual(projects.load_project("project_001").status, "media_ready")
             self.assertEqual(checkpoints.load_latest("project_001").state, state)
             self.assertEqual(approvals_path.read_bytes(), decision_before)
 
@@ -168,7 +212,7 @@ class PipelineRunnerTests(unittest.TestCase):
 
             state = PipelineRunner(projects, checkpoints).run("project_001")
             self.assertTrue(state["script_approved"])
-            self.assertEqual(projects.load_project("project_001").status, "script_approved")
+            self.assertEqual(projects.load_project("project_001").status, "media_ready")
             self.assertEqual(checkpoints.load_latest("project_001").state, state)
             self.assertEqual(approvals_path.read_bytes(), decision_before)
 

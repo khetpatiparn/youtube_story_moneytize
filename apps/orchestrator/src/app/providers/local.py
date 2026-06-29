@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import hashlib
+import html
 import re
 from typing import Any
+
+from app.services.artifacts import ArtifactStore
 
 
 class LocalLLMProvider:
@@ -43,4 +47,41 @@ class LocalLLMProvider:
             },
             "script": "\n\n".join(scene["narration"] for scene in scenes),
             "scenes": scenes,
+        }
+
+
+class LocalImageProvider:
+    provider = "local"
+    model = "deterministic-svg-v1"
+
+    def __init__(self, store: ArtifactStore) -> None:
+        self.store = store
+
+    def generate(self, scene: dict[str, Any], output_path: str) -> dict[str, Any]:
+        scene_id = str(scene["scene_id"])
+        prompt = str(scene["prompt"])
+        digest = hashlib.sha256(f"{scene_id}{prompt}".encode("utf-8")).hexdigest()
+        background = f"#{digest[:6]}"
+        accent = f"#{digest[6:12]}"
+        escaped_id = html.escape(scene_id)
+        escaped_title = html.escape(str(scene["title"]))
+        escaped_prompt = html.escape(prompt)
+        svg = (
+            '<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">\n'
+            f'  <rect width="1280" height="720" fill="{background}"/>\n'
+            f'  <circle cx="1080" cy="160" r="220" fill="{accent}" opacity="0.75"/>\n'
+            '  <g fill="#ffffff" font-family="Arial, sans-serif">\n'
+            f'    <text x="80" y="110" font-size="28">{escaped_id}</text>\n'
+            f'    <text x="80" y="300" font-size="54">{escaped_title}</text>\n'
+            f'    <text x="80" y="390" font-size="26">{escaped_prompt}</text>\n'
+            '  </g>\n'
+            '</svg>\n'
+        )
+        relative_path = self.store.write_text(output_path, svg)
+        return {
+            "provider": self.provider,
+            "model": self.model,
+            "prompt_hash": digest,
+            "output_path": relative_path,
+            "mime_type": "image/svg+xml",
         }

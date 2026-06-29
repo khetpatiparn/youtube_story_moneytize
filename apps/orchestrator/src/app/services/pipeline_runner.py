@@ -3,11 +3,13 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from app.providers.local import LocalImageProvider
 from app.repositories.checkpoint_repository import CheckpointRepository
 from app.repositories.project_repository import ProjectRepository
 from app.schemas.state import VideoProjectState
 from app.services.artifacts import ArtifactStore
 from app.services.content_pipeline import ContentPipeline
+from app.services.image_pipeline import ImageGenerationExhausted, ImagePipeline
 
 
 class PipelineRunner:
@@ -56,6 +58,20 @@ class PipelineRunner:
         checkpoint_state: VideoProjectState,
     ) -> VideoProjectState:
         state = self._apply_durable_approval(project_id, dict(checkpoint_state))
+        image_error: ImageGenerationExhausted | None = None
+        if state.get("script_approved") is True and state.get("current_node") == "script_approval":
+            store = ArtifactStore(self.projects.project_dir(project_id))
+            provider = self.image_provider or LocalImageProvider(store)
+            try:
+                images = ImagePipeline(store, provider).generate(
+                    state["scenes"], existing_jobs=state.get("image_jobs")
+                )
+            except ImageGenerationExhausted as error:
+                images = error.result
+                image_error = error
+            state.update(images)
+            state["current_node"] = "images"
+            state["status"] = "image_generation_failed" if image_error else "media_ready"
         current_metadata = self.projects.load_project(project_id)
         metadata = current_metadata.with_graph_result(state)
         if metadata != current_metadata:
@@ -63,6 +79,8 @@ class PipelineRunner:
         latest = self.checkpoints.load_latest(project_id)
         if latest is None or latest.state != state:
             self.checkpoints.save_checkpoint(project_id, state)
+        if image_error is not None:
+            raise image_error
         return state
 
     def _apply_durable_approval(
@@ -81,6 +99,13 @@ class PipelineRunner:
         if stage is None or not isinstance(approvals.get(stage), dict):
             return state
         approved = approvals[stage].get("approved") is True
+        if (
+            stage == "script"
+            and approved
+            and state.get("current_node") == "images"
+            and state.get("status") == "media_ready"
+        ):
+            return state
         state[f"{stage}_approved"] = approved
         state["status"] = f"{stage}_approved" if approved else f"{stage}_changes_requested"
         state["current_node"] = f"{stage}_approval"
@@ -94,11 +119,10 @@ class PipelineRunner:
 def _approval_stage_for_state(state: VideoProjectState) -> str | None:
     current_node = state.get("current_node")
     status = state.get("status", "")
-    if current_node == "script_approval" and status in {
-        "awaiting_script_approval",
-        "script_approved",
-        "script_changes_requested",
-    }:
+    if (
+        current_node == "script_approval"
+        and status in {"awaiting_script_approval", "script_approved", "script_changes_requested"}
+    ) or (current_node == "images" and status in {"media_ready", "image_generation_failed"}):
         return "script"
     if current_node == "final_approval" and status in {
         "awaiting_final_approval",
