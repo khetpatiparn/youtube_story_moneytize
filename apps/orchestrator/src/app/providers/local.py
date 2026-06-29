@@ -2,9 +2,14 @@ from __future__ import annotations
 
 import hashlib
 import html
+import io
+import math
 import re
+import struct
+import wave
 from typing import Any
 
+from app.providers.base import AudioResult
 from app.services.artifacts import ArtifactStore
 
 
@@ -85,6 +90,69 @@ class LocalImageProvider:
             "output_path": relative_path,
             "mime_type": "image/svg+xml",
         }
+
+
+class LocalTTSProvider:
+    provider = "local"
+    model = "deterministic-tone-v1"
+    sample_rate = 22050
+
+    def __init__(self, store: ArtifactStore) -> None:
+        self.store = store
+
+    async def synthesize(
+        self,
+        text: str,
+        voice_id: str,
+        output_path: str,
+        options: dict[str, Any],
+    ) -> AudioResult:
+        return self.synthesize_sync(text, voice_id, output_path, options)
+
+    def synthesize_sync(
+        self,
+        text: str,
+        voice_id: str,
+        output_path: str,
+        options: dict[str, Any] | None = None,
+    ) -> AudioResult:
+        options = options or {}
+        words_per_second = float(options.get("words_per_second", 2.5))
+        if not math.isfinite(words_per_second) or words_per_second <= 0:
+            raise ValueError("words_per_second must be positive")
+        word_count = len(text.split())
+        duration = max(1.0, word_count / words_per_second)
+        frame_count = round(duration * self.sample_rate)
+        samples = self._samples(frame_count, max(1, word_count))
+        buffer = io.BytesIO()
+        with wave.open(buffer, "wb") as audio:
+            audio.setnchannels(1)
+            audio.setsampwidth(2)
+            audio.setframerate(self.sample_rate)
+            audio.writeframes(samples)
+        relative_path = self.store.publish_bytes_set({output_path: buffer.getvalue()})[output_path]
+        return AudioResult(
+            provider=self.provider,
+            model=self.model,
+            voice_id=voice_id,
+            output_path=relative_path,
+            duration_seconds=frame_count / self.sample_rate,
+            status="completed",
+        )
+
+    def _samples(self, frame_count: int, segment_count: int) -> bytes:
+        output = bytearray(frame_count * 2)
+        for frame in range(frame_count):
+            segment = min(segment_count - 1, frame * segment_count // frame_count)
+            segment_start = segment * frame_count // segment_count
+            segment_end = (segment + 1) * frame_count // segment_count
+            active_end = segment_start + ((segment_end - segment_start) * 4 // 5)
+            value = 0
+            if frame < active_end:
+                frequency = 220 if segment % 2 == 0 else 330
+                value = round(2400 * math.sin(2 * math.pi * frequency * frame / self.sample_rate))
+            struct.pack_into("<h", output, frame * 2, value)
+        return bytes(output)
 
 
 def _xml_text(value: str) -> str:

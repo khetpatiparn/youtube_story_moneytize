@@ -86,8 +86,8 @@ class PipelineRunnerTests(unittest.TestCase):
 
             state = PipelineRunner(projects, checkpoints).resume("project_001")
             self.assertTrue(state["script_approved"])
-            self.assertEqual(state["status"], "media_ready")
-            self.assertEqual(state["current_node"], "images")
+            self.assertEqual(state["status"], "render_ready")
+            self.assertEqual(state["current_node"], "render")
             self.assertNotIn("waiting_for", state)
 
     def test_approved_script_generates_images_and_checkpoints_media_state(self):
@@ -103,8 +103,8 @@ class PipelineRunnerTests(unittest.TestCase):
 
             state = PipelineRunner(projects, checkpoints).resume("project_001")
 
-            self.assertEqual(state["status"], "media_ready")
-            self.assertEqual(state["current_node"], "images")
+            self.assertEqual(state["status"], "render_ready")
+            self.assertEqual(state["current_node"], "render")
             self.assertEqual(state["failed_scene_ids"], [])
             self.assertEqual(len(state["generated_images"]), state["scene_count"])
             self.assertEqual(checkpoints.load_latest("project_001").state, state)
@@ -162,8 +162,8 @@ class PipelineRunnerTests(unittest.TestCase):
             resumed = Counting(ArtifactStore(project_dir))
             state = PipelineRunner(projects, checkpoints, image_provider=resumed).resume("project_001")
             self.assertEqual(resumed.calls, 0)
-            self.assertEqual(state["status"], "media_ready")
-            self.assertEqual(projects.load_project("project_001").status, "media_ready")
+            self.assertEqual(state["status"], "render_ready")
+            self.assertEqual(projects.load_project("project_001").status, "render_ready")
             self.assertEqual(checkpoints.load_latest("project_001").state, state)
 
     def test_fresh_runner_recovers_durable_images_after_checkpoint_save_failure(self):
@@ -194,7 +194,7 @@ class PipelineRunnerTests(unittest.TestCase):
             resumed = Counting(ArtifactStore(project_dir))
             state = PipelineRunner(projects, checkpoints, image_provider=resumed).resume("project_001")
             self.assertEqual(resumed.calls, 0)
-            self.assertEqual(state["status"], "media_ready")
+            self.assertEqual(state["status"], "render_ready")
             self.assertEqual(checkpoints.load_latest("project_001").state, state)
 
     def test_run_recovers_after_metadata_save_failure(self):
@@ -254,7 +254,7 @@ class PipelineRunnerTests(unittest.TestCase):
 
             state = PipelineRunner(projects, checkpoints).resume("project_001")
             self.assertTrue(state["script_approved"])
-            self.assertEqual(projects.load_project("project_001").status, "media_ready")
+            self.assertEqual(projects.load_project("project_001").status, "render_ready")
             self.assertEqual(checkpoints.load_latest("project_001").state, state)
             self.assertEqual(approvals_path.read_bytes(), decision_before)
 
@@ -275,7 +275,7 @@ class PipelineRunnerTests(unittest.TestCase):
 
             state = PipelineRunner(projects, checkpoints).run("project_001")
             self.assertTrue(state["script_approved"])
-            self.assertEqual(projects.load_project("project_001").status, "media_ready")
+            self.assertEqual(projects.load_project("project_001").status, "render_ready")
             self.assertEqual(checkpoints.load_latest("project_001").state, state)
             self.assertEqual(approvals_path.read_bytes(), decision_before)
 

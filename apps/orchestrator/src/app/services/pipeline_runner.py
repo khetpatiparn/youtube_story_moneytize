@@ -3,13 +3,14 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from app.providers.local import LocalImageProvider
+from app.providers.local import LocalImageProvider, LocalTTSProvider
 from app.repositories.checkpoint_repository import CheckpointRepository
 from app.repositories.project_repository import ProjectRepository
 from app.schemas.state import VideoProjectState
 from app.services.artifacts import ArtifactStore
 from app.services.content_pipeline import ContentPipeline
 from app.services.image_pipeline import ImageGenerationExhausted, ImagePipeline
+from app.services.timeline import build_timeline, wav_duration_seconds
 
 
 class PipelineRunner:
@@ -72,6 +73,11 @@ class PipelineRunner:
             state.update(images)
             state["current_node"] = "images"
             state["status"] = "image_generation_failed" if image_error else "media_ready"
+        if state.get("status") in {"media_ready", "render_ready"} and state.get("current_node") in {
+            "images",
+            "render",
+        }:
+            state = self._reconcile_audio_timeline(project_id, state)
         current_metadata = self.projects.load_project(project_id)
         metadata = current_metadata.with_graph_result(state)
         if metadata != current_metadata:
@@ -82,6 +88,64 @@ class PipelineRunner:
         if image_error is not None:
             raise image_error
         return state
+
+    def _reconcile_audio_timeline(
+        self, project_id: str, state: VideoProjectState
+    ) -> VideoProjectState:
+        store = ArtifactStore(self.projects.project_dir(project_id))
+        audio_relative = "audio/narration.wav"
+        audio_path = store.path(audio_relative)
+        try:
+            duration = wav_duration_seconds(audio_path)
+        except ValueError:
+            provider = self.tts_provider or LocalTTSProvider(store)
+            result = provider.synthesize_sync(
+                state["script"], "narrator-th", audio_relative, {"words_per_second": 2.5}
+            )
+            duration = wav_duration_seconds(store.path(result.output_path))
+
+        timeline = build_timeline(state["scenes"], duration, fps=30)
+        payload = {
+            "fps": 30,
+            "width": 1280,
+            "height": 720,
+            "audioPath": audio_relative,
+            "scenes": [
+                {
+                    "sceneId": scene["scene_id"],
+                    "startFrame": timing["start_frame"],
+                    "durationInFrames": timing["duration_in_frames"],
+                    "imagePath": image["output_path"],
+                    "motion": scene.get("motion", "slow_push"),
+                    "focalPoint": scene.get("focal_point", [0.5, 0.5]),
+                }
+                for scene, timing, image in zip(
+                    state["scenes"], timeline, state["generated_images"]
+                )
+            ],
+        }
+        payload_relative = "render/render_payload.json"
+        if not self._payload_matches(store, payload_relative, payload):
+            store.write_json(payload_relative, payload)
+        state.update(
+            {
+                "voice_provider": getattr(self.tts_provider, "provider", "local"),
+                "voice_path": audio_relative,
+                "audio_duration_seconds": duration,
+                "timeline": timeline,
+                "render_payload_path": payload_relative,
+                "status": "render_ready",
+                "current_node": "render",
+            }
+        )
+        return state
+
+    @staticmethod
+    def _payload_matches(store: ArtifactStore, path: str, expected: dict[str, Any]) -> bool:
+        try:
+            return store.read_json(path) == expected
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            return False
 
     def _apply_durable_approval(
         self,
@@ -102,8 +166,8 @@ class PipelineRunner:
         if (
             stage == "script"
             and approved
-            and state.get("current_node") == "images"
-            and state.get("status") == "media_ready"
+            and state.get("current_node") in {"images", "render"}
+            and state.get("status") in {"media_ready", "render_ready"}
         ):
             return state
         state[f"{stage}_approved"] = approved
@@ -122,7 +186,9 @@ def _approval_stage_for_state(state: VideoProjectState) -> str | None:
     if (
         current_node == "script_approval"
         and status in {"awaiting_script_approval", "script_approved", "script_changes_requested"}
-    ) or (current_node == "images" and status in {"media_ready", "image_generation_failed"}):
+    ) or (current_node == "images" and status in {"media_ready", "image_generation_failed"}) or (
+        current_node == "render" and status == "render_ready"
+    ):
         return "script"
     if current_node == "final_approval" and status in {
         "awaiting_final_approval",
