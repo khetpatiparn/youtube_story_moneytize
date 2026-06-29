@@ -60,12 +60,12 @@ class LocalImageProvider:
     def generate(self, scene: dict[str, Any], output_path: str) -> dict[str, Any]:
         scene_id = str(scene["scene_id"])
         prompt = str(scene["prompt"])
-        digest = hashlib.sha256(f"{scene_id}{prompt}".encode("utf-8")).hexdigest()
+        digest = hashlib.sha256(f"{scene_id}{prompt}".encode("utf-8", errors="surrogatepass")).hexdigest()
         background = f"#{digest[:6]}"
         accent = f"#{digest[6:12]}"
-        escaped_id = html.escape(scene_id)
-        escaped_title = html.escape(str(scene["title"]))
-        escaped_prompt = html.escape(prompt)
+        escaped_id = html.escape(_xml_text(scene_id))
+        escaped_title = html.escape(_xml_text(str(scene["title"])))
+        escaped_prompt = html.escape(_xml_text(prompt))
         svg = (
             '<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">\n'
             f'  <rect width="1280" height="720" fill="{background}"/>\n'
@@ -85,3 +85,14 @@ class LocalImageProvider:
             "output_path": relative_path,
             "mime_type": "image/svg+xml",
         }
+
+
+def _xml_text(value: str) -> str:
+    return "".join(
+        character
+        for character in value
+        if character in "\t\n\r"
+        or "\u0020" <= character <= "\ud7ff"
+        or "\ue000" <= character <= "\ufffd"
+        or "\U00010000" <= character <= "\U0010ffff"
+    )

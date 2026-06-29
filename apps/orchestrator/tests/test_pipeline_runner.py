@@ -134,6 +134,69 @@ class PipelineRunnerTests(unittest.TestCase):
             self.assertTrue(state["failed_scene_ids"])
             self.assertEqual(state["retry_counts"]["scene_001"], 2)
 
+    def test_fresh_runner_recovers_durable_images_after_metadata_save_failure(self):
+        from app.providers.local import LocalImageProvider
+        from app.services.artifacts import ArtifactStore
+        from app.services.pipeline_runner import PipelineRunner
+
+        class Counting(LocalImageProvider):
+            calls = 0
+
+            def generate(self, scene, output_path):
+                self.calls += 1
+                return super().generate(scene, output_path)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            projects, checkpoints = self._setup(temp_dir)
+            PipelineRunner(projects, checkpoints).run("project_001")
+            project_dir = projects.project_dir("project_001")
+            approvals = project_dir / "reports" / "approvals.json"
+            approvals.parent.mkdir(parents=True, exist_ok=True)
+            approvals.write_text(json.dumps({"script": {"approved": True}}), encoding="utf-8")
+            first = Counting(ArtifactStore(project_dir))
+            with patch.object(projects, "save_project", side_effect=OSError("metadata failed")):
+                with self.assertRaisesRegex(OSError, "metadata failed"):
+                    PipelineRunner(projects, checkpoints, image_provider=first).resume("project_001")
+            self.assertGreater(first.calls, 0)
+
+            resumed = Counting(ArtifactStore(project_dir))
+            state = PipelineRunner(projects, checkpoints, image_provider=resumed).resume("project_001")
+            self.assertEqual(resumed.calls, 0)
+            self.assertEqual(state["status"], "media_ready")
+            self.assertEqual(projects.load_project("project_001").status, "media_ready")
+            self.assertEqual(checkpoints.load_latest("project_001").state, state)
+
+    def test_fresh_runner_recovers_durable_images_after_checkpoint_save_failure(self):
+        from app.providers.local import LocalImageProvider
+        from app.services.artifacts import ArtifactStore
+        from app.services.pipeline_runner import PipelineRunner
+
+        class Counting(LocalImageProvider):
+            calls = 0
+
+            def generate(self, scene, output_path):
+                self.calls += 1
+                return super().generate(scene, output_path)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            projects, checkpoints = self._setup(temp_dir)
+            PipelineRunner(projects, checkpoints).run("project_001")
+            project_dir = projects.project_dir("project_001")
+            approvals = project_dir / "reports" / "approvals.json"
+            approvals.parent.mkdir(parents=True, exist_ok=True)
+            approvals.write_text(json.dumps({"script": {"approved": True}}), encoding="utf-8")
+            first = Counting(ArtifactStore(project_dir))
+            with patch.object(checkpoints, "save_checkpoint", side_effect=OSError("checkpoint failed")):
+                with self.assertRaisesRegex(OSError, "checkpoint failed"):
+                    PipelineRunner(projects, checkpoints, image_provider=first).resume("project_001")
+            self.assertGreater(first.calls, 0)
+
+            resumed = Counting(ArtifactStore(project_dir))
+            state = PipelineRunner(projects, checkpoints, image_provider=resumed).resume("project_001")
+            self.assertEqual(resumed.calls, 0)
+            self.assertEqual(state["status"], "media_ready")
+            self.assertEqual(checkpoints.load_latest("project_001").state, state)
+
     def test_run_recovers_after_metadata_save_failure(self):
         from app.services.pipeline_runner import PipelineRunner
 
