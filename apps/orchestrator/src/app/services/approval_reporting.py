@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from app.repositories.checkpoint_repository import CheckpointRepository
 from app.repositories.project_repository import ProjectRepository
 
 
@@ -59,8 +60,13 @@ class ReportPaths:
 
 
 class ApprovalReportingService:
-    def __init__(self, repository: ProjectRepository):
+    def __init__(
+        self,
+        repository: ProjectRepository,
+        checkpoints: CheckpointRepository | None = None,
+    ):
         self.repository = repository
+        self.checkpoints = checkpoints
 
     def record_script_approval(self, request: ApprovalRequest) -> ApprovalDecision:
         decision = self._record_approval("script", request)
@@ -69,6 +75,13 @@ class ApprovalReportingService:
             current_node="script_approval",
         )
         self.repository.save_project(metadata)
+        self._update_checkpoint(
+            request.project_id,
+            approved_field="script_approved",
+            approved=request.approved,
+            status=metadata.status,
+            current_node="script_approval",
+        )
         return decision
 
     def record_final_approval(self, request: ApprovalRequest) -> ApprovalDecision:
@@ -78,7 +91,38 @@ class ApprovalReportingService:
             current_node="final_approval",
         )
         self.repository.save_project(metadata)
+        self._update_checkpoint(
+            request.project_id,
+            approved_field="final_approved",
+            approved=request.approved,
+            status=metadata.status,
+            current_node="final_approval",
+        )
         return decision
+
+    def _update_checkpoint(
+        self,
+        project_id: str,
+        *,
+        approved_field: str,
+        approved: bool,
+        status: str,
+        current_node: str,
+    ) -> None:
+        if self.checkpoints is None:
+            return
+        checkpoint = self.checkpoints.load_latest(project_id)
+        if checkpoint is None:
+            return
+        state = {
+            **checkpoint.state,
+            approved_field: approved,
+            "status": status,
+            "current_node": current_node,
+        }
+        if approved:
+            state.pop("waiting_for", None)
+        self.checkpoints.save_checkpoint(project_id, state)
 
     def write_project_reports(self, request: ReportRequest) -> ReportPaths:
         if not 0 <= request.quality_score <= 1:

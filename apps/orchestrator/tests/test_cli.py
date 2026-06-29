@@ -15,6 +15,7 @@ class CliTests(unittest.TestCase):
             env = os.environ.copy()
             env["PYTHONPATH"] = str(source_dir)
             checkpoint_db = str(Path(temp_dir) / "checkpoints.sqlite")
+            env["CHECKPOINT_DB"] = checkpoint_db
 
             create_result = subprocess.run(
                 [
@@ -87,8 +88,9 @@ class CliTests(unittest.TestCase):
             self.assertEqual(run_result.returncode, 0, run_result.stderr)
             run_payload = json.loads(run_result.stdout)
             self.assertEqual(run_payload["project_id"], "project_001")
-            self.assertEqual(run_payload["status"], "initialized")
-            self.assertEqual(run_payload["current_node"], "initialize_project")
+            self.assertEqual(run_payload["status"], "awaiting_script_approval")
+            self.assertEqual(run_payload["current_node"], "script_approval")
+            self.assertEqual(run_payload["waiting_for"], "script")
             self.assertTrue(Path(checkpoint_db).is_file())
 
             resume_result = subprocess.run(
@@ -113,8 +115,8 @@ class CliTests(unittest.TestCase):
             self.assertEqual(resume_result.returncode, 0, resume_result.stderr)
             resume_payload = json.loads(resume_result.stdout)
             self.assertEqual(resume_payload["project_id"], "project_001")
-            self.assertEqual(resume_payload["status"], "initialized")
-            self.assertEqual(resume_payload["current_node"], "initialize_project")
+            self.assertEqual(resume_payload["status"], "awaiting_script_approval")
+            self.assertEqual(resume_payload["current_node"], "script_approval")
 
             script_approval_result = subprocess.run(
                 [
@@ -142,6 +144,10 @@ class CliTests(unittest.TestCase):
             script_approval_payload = json.loads(script_approval_result.stdout)
             self.assertEqual(script_approval_payload["stage"], "script")
             self.assertTrue(script_approval_payload["approved"])
+            from app.repositories.checkpoint_repository import CheckpointRepository
+
+            saved = CheckpointRepository(Path(checkpoint_db)).load_latest("project_001")
+            self.assertTrue(saved.state["script_approved"])
 
             final_approval_result = subprocess.run(
                 [

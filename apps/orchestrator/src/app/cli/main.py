@@ -6,7 +6,6 @@ import os
 from pathlib import Path
 from typing import Sequence
 
-from app.graph.workflow import build_hello_world_graph
 from app.repositories.checkpoint_repository import CheckpointRepository
 from app.repositories.project_repository import ProjectRepository
 from app.schemas.project import CreateProjectRequest
@@ -15,6 +14,7 @@ from app.services.approval_reporting import (
     ApprovalRequest,
     ReportRequest,
 )
+from app.services.pipeline_runner import PipelineRunner
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -55,7 +55,7 @@ def _build_parser() -> argparse.ArgumentParser:
     status.add_argument("--project-id", required=True)
     status.add_argument("--projects-dir", default="./projects")
 
-    run = subparsers.add_parser("run", help="Run the hello-world graph")
+    run = subparsers.add_parser("run", help="Run the content pipeline")
     run.add_argument("--project-id", required=True)
     run.add_argument("--projects-dir", default="./projects")
     run.add_argument("--checkpoint-db", default=_default_checkpoint_db())
@@ -103,39 +103,37 @@ def _show_status(args: argparse.Namespace) -> int:
 def _run_project(args: argparse.Namespace) -> int:
     repository = ProjectRepository(Path(args.projects_dir))
     checkpoints = CheckpointRepository(Path(args.checkpoint_db))
-    metadata = repository.load_project(args.project_id)
-    graph = build_hello_world_graph()
-    result = graph.invoke(metadata.to_graph_state())
-    checkpoints.save_checkpoint(args.project_id, result)
-    metadata = metadata.with_graph_result(result)
-    repository.save_project(metadata)
-    print(json.dumps(metadata.to_dict(), ensure_ascii=False))
+    result = PipelineRunner(repository, checkpoints).run(args.project_id)
+    print(json.dumps(result, ensure_ascii=False))
     return 0
 
 
 def _resume_project(args: argparse.Namespace) -> int:
     repository = ProjectRepository(Path(args.projects_dir))
     checkpoints = CheckpointRepository(Path(args.checkpoint_db))
-    checkpoint = checkpoints.load_latest(args.project_id)
-    if checkpoint is None:
-        raise SystemExit(f"No checkpoint found for project_id {args.project_id}")
-
-    metadata = repository.load_project(args.project_id)
-    metadata = metadata.with_graph_result(checkpoint.state)
-    repository.save_project(metadata)
-    print(json.dumps(metadata.to_dict(), ensure_ascii=False))
+    try:
+        result = PipelineRunner(repository, checkpoints).resume(args.project_id)
+    except ValueError as error:
+        raise SystemExit(str(error)) from error
+    print(json.dumps(result, ensure_ascii=False))
     return 0
 
 
 def _record_script_approval(args: argparse.Namespace) -> int:
-    service = ApprovalReportingService(ProjectRepository(Path(args.projects_dir)))
+    service = ApprovalReportingService(
+        ProjectRepository(Path(args.projects_dir)),
+        CheckpointRepository(Path(args.checkpoint_db)),
+    )
     decision = service.record_script_approval(_approval_request_from_args(args))
     print(json.dumps(decision.to_dict(), ensure_ascii=False))
     return 0
 
 
 def _record_final_approval(args: argparse.Namespace) -> int:
-    service = ApprovalReportingService(ProjectRepository(Path(args.projects_dir)))
+    service = ApprovalReportingService(
+        ProjectRepository(Path(args.projects_dir)),
+        CheckpointRepository(Path(args.checkpoint_db)),
+    )
     decision = service.record_final_approval(_approval_request_from_args(args))
     print(json.dumps(decision.to_dict(), ensure_ascii=False))
     return 0
@@ -158,6 +156,7 @@ def _write_project_report(args: argparse.Namespace) -> int:
 def _add_approval_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--project-id", required=True)
     parser.add_argument("--projects-dir", default="./projects")
+    parser.add_argument("--checkpoint-db", default=_default_checkpoint_db())
     approval = parser.add_mutually_exclusive_group(required=True)
     approval.add_argument("--approved", action="store_true")
     approval.add_argument("--changes-requested", action="store_true")
