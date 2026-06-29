@@ -110,7 +110,9 @@ class ApprovalReportingService:
         from app.services.pipeline_runner import PipelineRunner
 
         assert self.checkpoints is not None
-        PipelineRunner(self.repository, self.checkpoints).reconcile_state(project_id, state)
+        PipelineRunner(self.repository, self.checkpoints).reconcile_approval_only(
+            project_id, state
+        )
 
     def write_project_reports(self, request: ReportRequest) -> ReportPaths:
         if not 0 <= request.quality_score <= 1:

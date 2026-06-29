@@ -206,7 +206,10 @@ class RunnerRenderingTests(unittest.TestCase):
             self.assertEqual(renderer.calls, 1)
             self.assertEqual(renderer.path, "render/render_payload.json")
             self.assertEqual(state["video_path"], "render/story.mp4")
-            self.assertEqual((state["status"], state["current_node"]), ("rendered", "quality"))
+            self.assertEqual(
+                (state["status"], state["current_node"]),
+                ("quality_validation_failed", "quality"),
+            )
 
     def test_runner_render_failure_keeps_render_ready_checkpoint_for_retry(self):
         from app.services.pipeline_runner import PipelineRunner
@@ -232,4 +235,5 @@ class RunnerRenderingTests(unittest.TestCase):
                 with self.assertRaisesRegex(OSError, "metadata failed"):
                     PipelineRunner(projects, checkpoints, renderer=RemotionRenderer(root, project, "project_001", command_runner=run)).resume("project_001")
             state = PipelineRunner(projects, checkpoints, renderer=RemotionRenderer(root, project, "project_001", command_runner=run)).resume("project_001")
-            self.assertEqual(len(calls), 1); self.assertEqual(state["status"], "rendered")
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(state["status"], "quality_validation_failed")

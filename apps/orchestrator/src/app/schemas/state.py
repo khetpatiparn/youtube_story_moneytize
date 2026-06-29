@@ -37,4 +37,5 @@ class VideoProjectState(TypedDict, total=False):
     quality_report: dict[str, Any]
     final_approved: bool
     current_node: str | None
+    waiting_for: str | None
     retry_counts: dict[str, int]

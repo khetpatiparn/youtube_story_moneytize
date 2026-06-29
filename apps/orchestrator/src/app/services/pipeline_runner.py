@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import math
 from typing import Any
@@ -13,6 +14,8 @@ from app.schemas.state import VideoProjectState
 from app.services.artifacts import ArtifactStore
 from app.services.content_pipeline import ContentPipeline
 from app.services.image_pipeline import ImageGenerationExhausted, ImagePipeline
+from app.services.approval_reporting import ApprovalReportingService, ReportRequest
+from app.services.quality import QualityResult, quality_input_fingerprint, validate_project_media
 from app.services.timeline import build_timeline, wav_duration_seconds
 
 
@@ -25,12 +28,14 @@ class PipelineRunner:
         image_provider: Any = None,
         tts_provider: Any = None,
         renderer: Any = None,
+        video_probe: Any = None,
     ) -> None:
         self.projects = projects
         self.checkpoints = checkpoints
         self.image_provider = image_provider
         self.tts_provider = tts_provider
         self.renderer = renderer
+        self.video_probe = video_probe
 
     def run(self, project_id: str) -> VideoProjectState:
         metadata = self.projects.load_project(project_id)
@@ -62,6 +67,9 @@ class PipelineRunner:
         checkpoint_state: VideoProjectState,
     ) -> VideoProjectState:
         state = self._apply_durable_approval(project_id, dict(checkpoint_state))
+        if state.get("status") == "final_approved" and state.get("current_node") == "final_approval":
+            state.update({"status": "completed", "current_node": "complete"})
+            state.pop("waiting_for", None)
         image_error: ImageGenerationExhausted | None = None
         if state.get("script_approved") is True and state.get("current_node") == "script_approval":
             store = ArtifactStore(self.projects.project_dir(project_id))
@@ -93,6 +101,55 @@ class PipelineRunner:
             state.update(
                 {"video_path": video_path, "status": "rendered", "current_node": "quality"}
             )
+        if state.get("status") == "rendered" and state.get("current_node") == "quality":
+            project_dir = self.projects.project_dir(project_id)
+            store = ArtifactStore(project_dir)
+            fingerprint = quality_input_fingerprint(project_dir, state)
+            cached = self._load_quality_cache(store, fingerprint)
+            if cached is None:
+                result = validate_project_media(
+                    project_dir,
+                    state.get("scenes"),
+                    state.get("timeline"),
+                    state.get("voice_path"),
+                    state.get("video_path"),
+                    state.get("render_payload_path"),
+                    self.video_probe,
+                    generated_images=state.get("generated_images"),
+                )
+                report_paths = ApprovalReportingService(self.projects).write_project_reports(
+                    ReportRequest(
+                        project_id=project_id,
+                        video_path=state["video_path"],
+                        quality_score=result.score,
+                        issues=result.issues,
+                    )
+                ).to_dict()
+                self._write_quality_cache(store, fingerprint, result, report_paths)
+            else:
+                result, report_paths = cached
+            quality_report = result.to_dict()
+            quality_report.update(report_paths)
+            state["quality_report"] = quality_report
+            if result.reviewable:
+                state.update(
+                    {"status": "awaiting_final_approval", "current_node": "final_approval", "waiting_for": "final"}
+                )
+            else:
+                state.update({"status": "quality_validation_failed", "current_node": "quality"})
+        self._persist_state(project_id, state)
+        if image_error is not None:
+            raise image_error
+        return state
+
+    def reconcile_approval_only(
+        self, project_id: str, checkpoint_state: VideoProjectState
+    ) -> VideoProjectState:
+        state = self._apply_durable_approval(project_id, dict(checkpoint_state))
+        self._persist_state(project_id, state)
+        return state
+
+    def _persist_state(self, project_id: str, state: VideoProjectState) -> None:
         current_metadata = self.projects.load_project(project_id)
         metadata = current_metadata.with_graph_result(state)
         if metadata != current_metadata:
@@ -100,9 +157,49 @@ class PipelineRunner:
         latest = self.checkpoints.load_latest(project_id)
         if latest is None or latest.state != state:
             self.checkpoints.save_checkpoint(project_id, state)
-        if image_error is not None:
-            raise image_error
-        return state
+
+    @staticmethod
+    def _load_quality_cache(
+        store: ArtifactStore, fingerprint: str
+    ) -> tuple[QualityResult, dict[str, str]] | None:
+        try:
+            cached = store.read_json("reports/quality_state.json")
+            if cached.get("fingerprint") != fingerprint:
+                return None
+            report_paths = cached["report_paths"]
+            report_hashes = cached["report_hashes"]
+            if not isinstance(report_paths, dict) or not isinstance(report_hashes, dict):
+                return None
+            for relative in report_paths.values():
+                if not isinstance(relative, str):
+                    return None
+                content = store.path(relative).read_bytes()
+                if hashlib.sha256(content).hexdigest() != report_hashes.get(relative):
+                    return None
+            return QualityResult.from_dict(cached["result"]), report_paths
+        except (FileNotFoundError, OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
+            return None
+
+    @staticmethod
+    def _write_quality_cache(
+        store: ArtifactStore,
+        fingerprint: str,
+        result: QualityResult,
+        report_paths: dict[str, str],
+    ) -> None:
+        report_hashes = {
+            relative: hashlib.sha256(store.path(relative).read_bytes()).hexdigest()
+            for relative in report_paths.values()
+        }
+        store.write_json(
+            "reports/quality_state.json",
+            {
+                "fingerprint": fingerprint,
+                "result": result.to_dict(),
+                "report_paths": report_paths,
+                "report_hashes": report_hashes,
+            },
+        )
 
     def _reconcile_audio_timeline(
         self, project_id: str, state: VideoProjectState
