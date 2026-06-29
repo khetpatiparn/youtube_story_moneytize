@@ -772,4 +772,3 @@ do not infer completion from unit tests alone.
 git add README.md AGENTS.md goals/e2e-pipeline-poc.md
 git commit -m "docs: document end-to-end local workflow"
 ```
-

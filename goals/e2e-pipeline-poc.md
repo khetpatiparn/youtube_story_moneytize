@@ -58,4 +58,3 @@ Verified locally on 2026-06-29:
 - YouTube upload and publishing.
 - Production LLM, image, or TTS credentials and billing.
 - Advanced character consistency, forced alignment, and YouTube analytics.
-

@@ -183,4 +183,3 @@ loading. Renderer and dashboard contract suites remain separate regression gates
 - Dashboard production build and `git diff --check` pass.
 - README and AGENTS explain commands, recovery, local-provider limitations, and the
   fact that production external providers and YouTube upload remain unimplemented.
-
