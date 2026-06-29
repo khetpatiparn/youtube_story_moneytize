@@ -1,6 +1,8 @@
 import tempfile
+import threading
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from app.services.artifacts import ArtifactStore
 
@@ -44,6 +46,49 @@ class ArtifactStoreTests(unittest.TestCase):
 
             with self.assertRaises(ValueError):
                 store.path((Path(temp_dir) / "outside.txt").resolve())
+
+    def test_concurrent_writes_use_isolated_temporary_files(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = ArtifactStore(Path(temp_dir) / "project_001")
+            replace_barrier = threading.Barrier(2)
+            replace_lock = threading.Lock()
+            real_replace = __import__("os").replace
+            errors = []
+
+            def synchronized_replace(source, destination):
+                replace_barrier.wait(timeout=2)
+                with replace_lock:
+                    real_replace(source, destination)
+
+            def write(content):
+                try:
+                    store.write_text("script/story.md", content)
+                except Exception as error:
+                    errors.append(error)
+
+            with patch("app.services.artifacts.os.replace", synchronized_replace):
+                threads = [
+                    threading.Thread(target=write, args=("first",)),
+                    threading.Thread(target=write, args=("second",)),
+                ]
+                for thread in threads:
+                    thread.start()
+                for thread in threads:
+                    thread.join()
+
+            self.assertEqual(errors, [])
+            self.assertIn(store.read_text("script/story.md"), {"first", "second"})
+
+    def test_removes_temporary_file_when_replace_fails(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = ArtifactStore(Path(temp_dir) / "project_001")
+
+            with patch("app.services.artifacts.os.replace", side_effect=OSError("replace failed")):
+                with self.assertRaisesRegex(OSError, "replace failed"):
+                    store.write_text("script/story.md", "content")
+
+            script_dir = store.root / "script"
+            self.assertEqual(list(script_dir.glob("*tmp*")), [])
 
 
 if __name__ == "__main__":

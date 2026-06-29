@@ -1,5 +1,6 @@
 import json
 import os
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -24,9 +25,26 @@ class ArtifactStore:
     def write_text(self, relative_path: str | Path, content: str) -> str:
         destination = self.path(relative_path)
         destination.parent.mkdir(parents=True, exist_ok=True)
-        temporary = destination.with_name(f"{destination.name}.tmp")
-        temporary.write_text(content, encoding="utf-8")
-        os.replace(temporary, destination)
+        temporary_path = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                delete=False,
+                dir=destination.parent,
+                prefix=f".{destination.name}.",
+                suffix=".tmp",
+            ) as temporary:
+                temporary_path = Path(temporary.name)
+                temporary.write(content)
+            os.replace(temporary_path, destination)
+        except BaseException:
+            if temporary_path is not None:
+                try:
+                    temporary_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            raise
         return destination.relative_to(self.root).as_posix()
 
     def write_json(self, relative_path: str | Path, content: Any) -> str:
