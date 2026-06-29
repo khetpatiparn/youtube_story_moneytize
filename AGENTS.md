@@ -14,6 +14,7 @@ This repo contains `youtube_story_automation_poc_plan.md`, Python orchestrator, 
 ## Build, Test, and Development Commands
 Use `$env:PYTHONPATH='apps/orchestrator/src'` unless installed editable.
 - `python -m unittest discover apps/orchestrator/tests` runs orchestrator tests.
+- `python -m unittest apps/orchestrator/tests/test_end_to_end.py` runs the real local CLI-to-MP4 acceptance test.
 - `python -m app create --topic "..." --duration 180 --profile simple_story_th` creates a project.
 - `python -m app run --project-id project_001 --checkpoint-db ./data/checkpoints.sqlite` runs and checkpoints.
 - `python -m app resume --project-id project_001 --checkpoint-db ./data/checkpoints.sqlite` restores checkpoint state.
@@ -34,6 +35,8 @@ Use Python for orchestration and TypeScript/React for Remotion. Keep one node re
 ## Testing Guidelines
 Prioritize deterministic tests for prompt hashing, provider contracts, approvals, reports, file naming, retry policy, timeline math, state transitions, checkpoint resume, renderer payloads, and scene retry flows.
 
+The local end-to-end test invokes Remotion and requires installed Node dependencies. Image retry is per scene and bounded to three total attempts unless the CLI explicitly overrides it. A render failure is retried by a later `resume`, never by an unbounded loop. Keep the latest validated checkpoint and do not delete fingerprint manifests when diagnosing recovery.
+
 ## Commit & Pull Request Guidelines
 Use short imperative commits. Do not implement on `main` unless approved. PRs should link `/goals`, describe impact, list validation, note services, include render samples for video changes, and state rollback.
 
@@ -47,3 +50,5 @@ At feature end, update `AGENTS.md` for new commands, rules, tests, recovery step
 Store secrets in `.env` and commit only `.env.example`. Never log keys or tokens. Validate file names, MIME types, sizes, and project paths. Route external operations through reviewed wrappers.
 
 The dashboard is read-only in the first slice; do not add pipeline execution, approval writes, or upload actions without a new goal and tests.
+
+Local content, SVG image, and tone-WAV providers are deterministic POC adapters. They do not prove production model quality or external-provider readiness. YouTube upload remains out of scope.

@@ -1,5 +1,7 @@
 # Goal: End-to-End Local POC Pipeline
 
+**Status:** Implementation complete; final branch review and integration pending.
+
 ## Outcome
 
 Deliver a deterministic local workflow that turns a project topic into a reviewed
@@ -28,14 +30,28 @@ recoverable milestone before integration.
 
 ## Acceptance Evidence
 
-- A clean checkout can create and run the documented sample project.
-- The first run stops at script approval; approving and resuming reaches final approval.
-- A configured test scene failure retries only that scene and never exceeds its limit.
-- The project contains script, scene, image, WAV, render payload, MP4, approval, and report artifacts.
-- Restarting the CLI resumes from the latest persisted workflow state without repeating completed work.
-- Orchestrator, renderer, dashboard, and end-to-end tests pass.
-- The dashboard production build and `git diff --check` pass.
-- README and AGENTS list the commands, recovery steps, and external-provider limitations.
+- [x] A clean checkout can create and run the documented sample project.
+- [x] The first run stops at script approval; approving and resuming reaches final approval.
+- [x] A configured test scene failure retries only that scene and never exceeds its limit.
+- [x] The project contains script, scene, image, WAV, render payload, MP4, approval, and report artifacts.
+- [x] Restarting the CLI resumes from the latest persisted workflow state without repeating completed work.
+- [x] Orchestrator, renderer, dashboard, and end-to-end tests pass.
+- [x] The dashboard production build and `git diff --check` pass.
+- [x] README and AGENTS list the commands, recovery steps, and external-provider limitations.
+
+## Verification Snapshot
+
+Verified locally on 2026-06-29:
+
+- `python -m unittest discover apps/orchestrator/tests`: 99 passed, 1 Windows symlink test skipped because link creation was denied.
+- `python -m compileall apps/orchestrator/src`: passed.
+- `npm.cmd run test:renderer`: 5 passed.
+- `npm.cmd run test:dashboard`: 10 passed.
+- `npm.cmd run build:dashboard`: passed.
+- Real subprocess acceptance test created and probed an MP4 in about 11 seconds.
+- Persistent ignored sample `projects/sample_story/render/story.mp4`: 365,884 bytes.
+- Dashboard export loaded `sample_story` as `source: live`, `status: completed`.
+- `git diff --check`: passed.
 
 ## Out of Scope
 
