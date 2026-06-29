@@ -50,34 +50,28 @@ class ArtifactStoreTests(unittest.TestCase):
     def test_concurrent_writes_use_isolated_temporary_files(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             store = ArtifactStore(Path(temp_dir) / "project_001")
-            replace_barrier = threading.Barrier(2)
-            replace_lock = threading.Lock()
-            real_replace = __import__("os").replace
+            contents = {f"writer-{index}" for index in range(8)}
+            start_barrier = threading.Barrier(len(contents))
             errors = []
-
-            def synchronized_replace(source, destination):
-                replace_barrier.wait(timeout=2)
-                with replace_lock:
-                    real_replace(source, destination)
 
             def write(content):
                 try:
+                    start_barrier.wait(timeout=2)
                     store.write_text("script/story.md", content)
                 except Exception as error:
                     errors.append(error)
 
-            with patch("app.services.artifacts.os.replace", synchronized_replace):
-                threads = [
-                    threading.Thread(target=write, args=("first",)),
-                    threading.Thread(target=write, args=("second",)),
-                ]
-                for thread in threads:
-                    thread.start()
-                for thread in threads:
-                    thread.join()
+            threads = [
+                threading.Thread(target=write, args=(content,))
+                for content in contents
+            ]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
 
             self.assertEqual(errors, [])
-            self.assertIn(store.read_text("script/story.md"), {"first", "second"})
+            self.assertIn(store.read_text("script/story.md"), contents)
 
     def test_removes_temporary_file_when_replace_fails(self):
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -1,11 +1,15 @@
 import json
 import os
 import tempfile
+import threading
 from pathlib import Path
 from typing import Any
 
 
 class ArtifactStore:
+    _locks_guard = threading.Lock()
+    _destination_locks: dict[str, threading.Lock] = {}
+
     def __init__(self, project_root: str | Path):
         self.root = Path(project_root).resolve()
         self.root.mkdir(parents=True, exist_ok=True)
@@ -22,30 +26,39 @@ class ArtifactStore:
             raise ValueError("Artifact path must remain within the project root")
         return resolved
 
+    def _lock_for(self, relative_path: str | Path) -> threading.Lock:
+        relative = Path(relative_path)
+        if relative.is_absolute() or ".." in relative.parts:
+            self.path(relative)
+        key = os.path.normcase(os.path.abspath(self.root / relative))
+        with self._locks_guard:
+            return self._destination_locks.setdefault(key, threading.Lock())
+
     def write_text(self, relative_path: str | Path, content: str) -> str:
-        destination = self.path(relative_path)
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        temporary_path = None
-        try:
-            with tempfile.NamedTemporaryFile(
-                mode="w",
-                encoding="utf-8",
-                delete=False,
-                dir=destination.parent,
-                prefix=f".{destination.name}.",
-                suffix=".tmp",
-            ) as temporary:
-                temporary_path = Path(temporary.name)
-                temporary.write(content)
-            os.replace(temporary_path, destination)
-        except BaseException:
-            if temporary_path is not None:
-                try:
-                    temporary_path.unlink(missing_ok=True)
-                except OSError:
-                    pass
-            raise
-        return destination.relative_to(self.root).as_posix()
+        with self._lock_for(relative_path):
+            destination = self.path(relative_path)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            temporary_path = None
+            try:
+                with tempfile.NamedTemporaryFile(
+                    mode="w",
+                    encoding="utf-8",
+                    delete=False,
+                    dir=destination.parent,
+                    prefix=f".{destination.name}.",
+                    suffix=".tmp",
+                ) as temporary:
+                    temporary_path = Path(temporary.name)
+                    temporary.write(content)
+                os.replace(temporary_path, destination)
+            except BaseException:
+                if temporary_path is not None:
+                    try:
+                        temporary_path.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+                raise
+            return destination.relative_to(self.root).as_posix()
 
     def write_json(self, relative_path: str | Path, content: Any) -> str:
         serialized = json.dumps(content, ensure_ascii=False, indent=2) + "\n"
