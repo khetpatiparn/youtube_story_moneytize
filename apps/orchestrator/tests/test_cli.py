@@ -148,6 +148,15 @@ class CliTests(unittest.TestCase):
 
             saved = CheckpointRepository(Path(checkpoint_db)).load_latest("project_001")
             self.assertTrue(saved.state["script_approved"])
+            CheckpointRepository(Path(checkpoint_db)).save_checkpoint(
+                "project_001",
+                {
+                    **saved.state,
+                    "status": "awaiting_final_approval",
+                    "current_node": "final_approval",
+                    "waiting_for": "final",
+                },
+            )
 
             final_approval_result = subprocess.run(
                 [

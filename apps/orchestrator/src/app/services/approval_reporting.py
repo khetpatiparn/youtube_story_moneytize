@@ -69,60 +69,48 @@ class ApprovalReportingService:
         self.checkpoints = checkpoints
 
     def record_script_approval(self, request: ApprovalRequest) -> ApprovalDecision:
+        checkpoint = self._validate_checkpoint_gate(request.project_id, "script")
         decision = self._record_approval("script", request)
+        if checkpoint is not None:
+            self._reconcile_checkpoint(request.project_id, checkpoint.state)
+            return decision
         metadata = self.repository.load_project(request.project_id).with_status(
             "script_approved" if request.approved else "script_changes_requested",
             current_node="script_approval",
         )
         self.repository.save_project(metadata)
-        self._update_checkpoint(
-            request.project_id,
-            approved_field="script_approved",
-            approved=request.approved,
-            status=metadata.status,
-            current_node="script_approval",
-        )
         return decision
 
     def record_final_approval(self, request: ApprovalRequest) -> ApprovalDecision:
+        checkpoint = self._validate_checkpoint_gate(request.project_id, "final")
         decision = self._record_approval("final", request)
+        if checkpoint is not None:
+            self._reconcile_checkpoint(request.project_id, checkpoint.state)
+            return decision
         metadata = self.repository.load_project(request.project_id).with_status(
             "final_approved" if request.approved else "final_changes_requested",
             current_node="final_approval",
         )
         self.repository.save_project(metadata)
-        self._update_checkpoint(
-            request.project_id,
-            approved_field="final_approved",
-            approved=request.approved,
-            status=metadata.status,
-            current_node="final_approval",
-        )
         return decision
 
-    def _update_checkpoint(
-        self,
-        project_id: str,
-        *,
-        approved_field: str,
-        approved: bool,
-        status: str,
-        current_node: str,
-    ) -> None:
+    def _validate_checkpoint_gate(self, project_id: str, stage: str):
         if self.checkpoints is None:
-            return
+            return None
         checkpoint = self.checkpoints.load_latest(project_id)
         if checkpoint is None:
-            return
-        state = {
-            **checkpoint.state,
-            approved_field: approved,
-            "status": status,
-            "current_node": current_node,
-        }
-        if approved:
-            state.pop("waiting_for", None)
-        self.checkpoints.save_checkpoint(project_id, state)
+            return None
+        from app.services.pipeline_runner import approval_stage_is_eligible
+
+        if not approval_stage_is_eligible(checkpoint.state, stage):
+            raise ValueError(f"{stage} approval is only allowed at the {stage} approval gate")
+        return checkpoint
+
+    def _reconcile_checkpoint(self, project_id: str, state) -> None:
+        from app.services.pipeline_runner import PipelineRunner
+
+        assert self.checkpoints is not None
+        PipelineRunner(self.repository, self.checkpoints).reconcile_state(project_id, state)
 
     def write_project_reports(self, request: ReportRequest) -> ReportPaths:
         if not 0 <= request.quality_score <= 1:
