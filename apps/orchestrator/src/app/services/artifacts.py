@@ -9,6 +9,7 @@ from typing import Any
 class ArtifactStore:
     _locks_guard = threading.Lock()
     _destination_locks: dict[str, threading.Lock] = {}
+    _publication_locks: dict[str, threading.Lock] = {}
 
     def __init__(self, project_root: str | Path):
         self.root = Path(project_root).resolve()
@@ -47,6 +48,7 @@ class ArtifactStore:
                 with tempfile.NamedTemporaryFile(
                     mode="w",
                     encoding="utf-8",
+                    newline="\n",
                     delete=False,
                     dir=destination.parent,
                     prefix=f".{destination.name}.",
@@ -63,6 +65,58 @@ class ArtifactStore:
                         pass
                 raise
             return destination.relative_to(self.root).as_posix()
+
+    def publish_bytes_set(self, artifacts: dict[str, bytes]) -> dict[str, str]:
+        destinations = {path: self.path(path) for path in artifacts}
+        root_key = os.path.normcase(str(self.root))
+        with self._locks_guard:
+            publication_lock = self._publication_locks.setdefault(root_key, threading.Lock())
+
+        with publication_lock:
+            staged: dict[str, Path] = {}
+            backups: dict[str, Path] = {}
+            existed = {path: destination.exists() for path, destination in destinations.items()}
+            committed: list[str] = []
+            try:
+                for path, destination in destinations.items():
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    staged[path] = self._temporary_bytes(destination, artifacts[path], "stage")
+                    if existed[path]:
+                        backups[path] = self._temporary_bytes(
+                            destination,
+                            destination.read_bytes(),
+                            "backup",
+                        )
+
+                for path, destination in destinations.items():
+                    os.replace(staged[path], destination)
+                    staged.pop(path)
+                    committed.append(path)
+            except BaseException:
+                for path in reversed(committed):
+                    destination = destinations[path]
+                    if existed[path]:
+                        os.replace(backups.pop(path), destination)
+                    else:
+                        destination.unlink(missing_ok=True)
+                raise
+            finally:
+                for temporary in (*staged.values(), *backups.values()):
+                    temporary.unlink(missing_ok=True)
+
+        return {path: destination.relative_to(self.root).as_posix() for path, destination in destinations.items()}
+
+    @staticmethod
+    def _temporary_bytes(destination: Path, content: bytes, kind: str) -> Path:
+        with tempfile.NamedTemporaryFile(
+            mode="wb",
+            delete=False,
+            dir=destination.parent,
+            prefix=f".{destination.name}.{kind}.",
+            suffix=".tmp",
+        ) as temporary:
+            temporary.write(content)
+            return Path(temporary.name)
 
     def write_json(self, relative_path: str | Path, content: Any) -> str:
         serialized = json.dumps(content, ensure_ascii=False, indent=2) + "\n"

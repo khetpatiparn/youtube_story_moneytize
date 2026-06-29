@@ -2,6 +2,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from app.providers.local import LocalLLMProvider
 from app.services.artifacts import ArtifactStore
@@ -9,6 +10,67 @@ from app.services.content_pipeline import ContentPipeline
 
 
 class LocalContentPipelineTests(unittest.TestCase):
+    def test_rejects_invalid_provider_output_before_writing_artifacts(self):
+        class InvalidProvider:
+            def generate_story(self, *args):
+                return {"outline": {}, "script": "incomplete", "scenes": []}
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = ArtifactStore(Path(temp_dir) / "project_001")
+            state = {
+                "topic": "Topic",
+                "target_duration_seconds": 30,
+                "target_language": "en",
+                "channel_style_profile": "simple",
+            }
+
+            with self.assertRaisesRegex(ValueError, "provider output"):
+                ContentPipeline(store, InvalidProvider()).generate(state)
+
+            self.assertEqual([path for path in store.root.rglob("*") if path.is_file()], [])
+
+    def test_failed_publication_restores_complete_previous_artifact_set(self):
+        for failed_commit in (1, 2, 3):
+            with self.subTest(failed_commit=failed_commit), tempfile.TemporaryDirectory() as temp_dir:
+                store = ArtifactStore(Path(temp_dir) / "project_001")
+                pipeline = ContentPipeline(store)
+                base_state = {
+                    "topic": "First version",
+                    "target_duration_seconds": 40,
+                    "target_language": "en",
+                    "channel_style_profile": "simple",
+                    "script_version": 1,
+                }
+                pipeline.generate(base_state)
+                relative_paths = (
+                    "content/outline.json",
+                    "content/script.txt",
+                    "scenes/scenes.json",
+                )
+                previous_bytes = {path: store.path(path).read_bytes() for path in relative_paths}
+                real_replace = __import__("os").replace
+                replace_count = 0
+
+                def fail_selected_commit(source, destination):
+                    nonlocal replace_count
+                    replace_count += 1
+                    if replace_count == failed_commit:
+                        raise OSError("injected publication failure")
+                    return real_replace(source, destination)
+
+                with patch("app.services.artifacts.os.replace", side_effect=fail_selected_commit):
+                    with self.assertRaisesRegex(OSError, "injected publication failure"):
+                        pipeline.generate({**base_state, "topic": "Second version", "script_version": 2})
+
+                self.assertEqual(
+                    {path: store.path(path).read_bytes() for path in relative_paths},
+                    previous_bytes,
+                )
+                self.assertEqual(
+                    [path for path in store.root.rglob("*") if path.is_file() and path.name.startswith(".")],
+                    [],
+                )
+
     def test_provider_is_deterministic_and_normalizes_topic(self):
         provider = LocalLLMProvider()
         first = provider.generate_story("  The   Moon  ", 42, "en", "calm", 2)

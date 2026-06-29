@@ -8,6 +8,22 @@ from app.services.artifacts import ArtifactStore
 
 
 class ArtifactStoreTests(unittest.TestCase):
+    def test_writes_utf8_bytes_with_lf_newlines(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = ArtifactStore(Path(temp_dir) / "project_001")
+
+            text_path = store.write_text("content/script.txt", "สวัสดี\nโลก\n")
+            json_path = store.write_json("content/outline.json", {"title": "นิทาน"})
+
+            self.assertEqual(
+                store.path(text_path).read_bytes(),
+                "สวัสดี\nโลก\n".encode("utf-8"),
+            )
+            self.assertEqual(
+                store.path(json_path).read_bytes(),
+                '{\n  "title": "นิทาน"\n}\n'.encode("utf-8"),
+            )
+
     def test_text_and_json_round_trip(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             project_root = Path(temp_dir) / "project_001"
