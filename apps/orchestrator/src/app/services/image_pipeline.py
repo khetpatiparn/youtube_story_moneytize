@@ -137,6 +137,16 @@ class ImagePipeline:
                     retry_count=max(job["attempts"] - 1, 0),
                 )
                 job.pop("error_type", None)
+                validation_error = self._completed_job_corruption(job, scene_id)
+                if validation_error is not None:
+                    job.update(
+                        status="retrying" if job["attempts"] < self.max_attempts else "failed",
+                        error=validation_error,
+                    )
+                    self._publish(jobs, scene_by_id, scenes)
+                    if job["status"] == "retrying":
+                        retry_pending.append(job)
+                    continue
                 scene["image_path"] = image["output_path"]
                 self._publish(jobs, scene_by_id, scenes)
             pending = retry_pending
@@ -175,9 +185,19 @@ class ImagePipeline:
         if not path.is_file() or path.stat().st_size == 0:
             return "output file is missing or empty"
         try:
-            ElementTree.fromstring(path.read_bytes())
+            root = ElementTree.fromstring(path.read_bytes())
         except (ElementTree.ParseError, OSError):
             return "output SVG is not parseable"
+        if root.tag != "{http://www.w3.org/2000/svg}svg":
+            return "output XML root must be the SVG namespace element"
+        expected_canvas = {
+            "width": "1280",
+            "height": "720",
+            "viewBox": "0 0 1280 720",
+        }
+        for attribute, expected in expected_canvas.items():
+            if root.get(attribute) != expected:
+                return f"output SVG {attribute} must be {expected!r}"
         return None
 
     def _publish(

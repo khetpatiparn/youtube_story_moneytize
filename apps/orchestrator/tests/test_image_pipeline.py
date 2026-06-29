@@ -2,7 +2,6 @@ import json
 import tempfile
 import unittest
 from collections import Counter
-from pathlib import Path
 from unittest.mock import patch
 from xml.etree import ElementTree
 
@@ -93,23 +92,24 @@ class ImagePipelineTests(unittest.TestCase):
 
     def test_exhaustion_persists_consistent_jobs_and_scenes(self):
         from app.providers.base import RetryableProviderError
+        from app.providers.local import LocalImageProvider
         from app.services.artifacts import ArtifactStore
         from app.services.image_pipeline import ImageGenerationExhausted, ImagePipeline
 
         class AlwaysFails:
-            def __init__(self):
+            def __init__(self, store):
                 self.calls = Counter()
+                self.local = LocalImageProvider(store)
 
             def generate(self, scene, output_path):
                 self.calls[scene["scene_id"]] += 1
                 if scene["scene_id"] == "scene_002":
                     raise RetryableProviderError("still unavailable")
-                Path(output_path)  # prove output is opaque to injected providers
-                return {"output_path": f"images/{scene['scene_id']}.svg", "mime_type": "image/svg+xml"}
+                return self.local.generate(scene, output_path)
 
         with tempfile.TemporaryDirectory() as temp_dir:
             store = ArtifactStore(temp_dir)
-            provider = AlwaysFails()
+            provider = AlwaysFails(store)
             with self.assertRaises(ImageGenerationExhausted) as raised:
                 ImagePipeline(store, provider, max_attempts=3).generate(scenes())
 
@@ -313,6 +313,84 @@ class ImagePipelineTests(unittest.TestCase):
                       "output_path": "../outside.svg", "mime_type": "image/svg+xml"}
             with self.assertRaisesRegex(PermanentProviderError, "no corresponding scene"):
                 ImagePipeline(store, LocalImageProvider(store)).generate(scenes()[:1], existing_jobs=[orphan])
+
+    def test_persisted_non_svg_xml_root_is_not_skipped(self):
+        from app.providers.local import LocalImageProvider
+        from app.services.artifacts import ArtifactStore
+        from app.services.image_pipeline import ImagePipeline
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = ArtifactStore(temp_dir)
+            store.write_text("images/old.svg", "<root/>\n")
+            job = {"scene_id": "scene_001", "status": "completed", "attempts": 1,
+                   "retry_count": 0, "output_path": "images/old.svg", "mime_type": "image/svg+xml"}
+            result = ImagePipeline(store, LocalImageProvider(store)).generate(scenes()[:1], existing_jobs=[job])
+            self.assertEqual(result["image_jobs"][0]["attempts"], 2)
+            self.assertNotEqual(result["image_jobs"][0]["output_path"], "images/old.svg")
+
+    def test_persisted_svg_requires_namespace_and_exact_canvas_attributes(self):
+        from app.providers.local import LocalImageProvider
+        from app.services.artifacts import ArtifactStore
+        from app.services.image_pipeline import ImagePipeline
+
+        invalid_svgs = (
+            '<svg width="1280" height="720" viewBox="0 0 1280 720"/>',
+            '<svg xmlns="http://www.w3.org/2000/svg" width="640" height="720" viewBox="0 0 1280 720"/>',
+            '<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="700" viewBox="0 0 1280 720"/>',
+            '<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720"/>',
+            '<root xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720"/>',
+        )
+        for svg in invalid_svgs:
+            with self.subTest(svg=svg), tempfile.TemporaryDirectory() as temp_dir:
+                store = ArtifactStore(temp_dir)
+                store.write_text("images/old.svg", svg + "\n")
+                job = {"scene_id": "scene_001", "status": "completed", "attempts": 1,
+                       "retry_count": 0, "output_path": "images/old.svg", "mime_type": "image/svg+xml"}
+                result = ImagePipeline(store, LocalImageProvider(store)).generate(scenes()[:1], existing_jobs=[job])
+                self.assertEqual(result["image_jobs"][0]["attempts"], 2)
+
+    def test_fresh_provider_nonexistent_output_exhausts_validation_retries(self):
+        from app.services.artifacts import ArtifactStore
+        from app.services.image_pipeline import ImageGenerationExhausted, ImagePipeline
+
+        class MissingOutput:
+            calls = 0
+
+            def generate(self, scene, output_path):
+                self.calls += 1
+                return {"output_path": "images/missing.svg", "mime_type": "image/svg+xml"}
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = ArtifactStore(temp_dir)
+            provider = MissingOutput()
+            with self.assertRaises(ImageGenerationExhausted):
+                ImagePipeline(store, provider).generate(scenes()[:1])
+            job = store.read_json("images/jobs.json")[0]
+            self.assertEqual((provider.calls, job["attempts"], job["status"], job["retry_count"]), (3, 3, "failed", 2))
+            self.assertIn("missing or empty", job["error"])
+
+    def test_fresh_provider_malformed_svg_never_completes(self):
+        from app.services.artifacts import ArtifactStore
+        from app.services.image_pipeline import ImageGenerationExhausted, ImagePipeline
+
+        class MalformedOutput:
+            def __init__(self, store):
+                self.store = store
+                self.calls = 0
+
+            def generate(self, scene, output_path):
+                self.calls += 1
+                self.store.write_text(output_path, "<svg")
+                return {"output_path": output_path, "mime_type": "image/svg+xml"}
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = ArtifactStore(temp_dir)
+            provider = MalformedOutput(store)
+            with self.assertRaises(ImageGenerationExhausted):
+                ImagePipeline(store, provider).generate(scenes()[:1])
+            job = store.read_json("images/jobs.json")[0]
+            self.assertEqual((provider.calls, job["attempts"], job["status"]), (3, 3, "failed"))
+            self.assertIn("not parseable", job["error"])
 
 
 if __name__ == "__main__":
