@@ -286,8 +286,11 @@ class ImagePipelineTests(unittest.TestCase):
             job = {"scene_id": "scene_001", "status": "completed", "attempts": 3, "retry_count": 2,
                    "output_path": "../outside.svg", "mime_type": "image/svg+xml"}
             with self.assertRaisesRegex(PermanentProviderError, "corrupt completed image job"):
-                ImagePipeline(store, NeverCalled()).generate(scenes()[:1], existing_jobs=[job])
+                ImagePipeline(store, NeverCalled()).generate(
+                    [scenes()[0] | {"image_path": "../outside.svg"}], existing_jobs=[job]
+                )
             self.assertEqual(store.read_json("images/jobs.json")[0]["status"], "permanent_failed")
+            self.assertNotIn("image_path", store.read_json("scenes/scenes.json")[0])
 
     def test_completed_job_missing_required_mime_metadata_is_retried(self):
         from app.providers.local import LocalImageProvider
@@ -391,6 +394,36 @@ class ImagePipelineTests(unittest.TestCase):
             job = store.read_json("images/jobs.json")[0]
             self.assertEqual((provider.calls, job["attempts"], job["status"]), (3, 3, "failed"))
             self.assertIn("not parseable", job["error"])
+
+    def test_corrupt_completed_job_clears_stale_scene_path_when_regeneration_exhausts(self):
+        from app.services.artifacts import ArtifactStore
+        from app.services.image_pipeline import ImageGenerationExhausted, ImagePipeline
+
+        class MissingOutput:
+            def generate(self, scene, output_path):
+                return {"output_path": "images/still-missing.svg", "mime_type": "image/svg+xml"}
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = ArtifactStore(temp_dir)
+            stale_scene = scenes()[0] | {"image_path": "images/corrupt.svg"}
+            store.write_text("images/corrupt.svg", "<root/>\n")
+            completed = {
+                "scene_id": "scene_001",
+                "status": "completed",
+                "attempts": 1,
+                "retry_count": 0,
+                "output_path": "images/corrupt.svg",
+                "mime_type": "image/svg+xml",
+            }
+
+            with self.assertRaises(ImageGenerationExhausted) as raised:
+                ImagePipeline(store, MissingOutput()).generate([stale_scene], existing_jobs=[completed])
+
+            self.assertNotIn("image_path", raised.exception.result["scenes"][0])
+            self.assertNotIn("image_path", store.read_json("scenes/scenes.json")[0])
+            failed = store.read_json("images/jobs.json")[0]
+            self.assertEqual((failed["status"], failed["attempts"]), ("failed", 3))
+            self.assertIn("missing or empty", failed["error"])
 
 
 if __name__ == "__main__":

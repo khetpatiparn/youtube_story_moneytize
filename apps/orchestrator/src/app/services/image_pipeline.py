@@ -72,14 +72,16 @@ class ImagePipeline:
                 corruption = self._completed_job_corruption(job, scene_id)
                 if corruption is None:
                     scene_by_id[scene_id]["image_path"] = job["output_path"]
-                elif int(job.get("attempts", 0)) < self.max_attempts:
-                    job.update(status="pending", error=corruption)
-                    for key in ("output_path", "mime_type", "provider", "model", "prompt_hash"):
-                        job.pop(key, None)
                 else:
-                    message = f"corrupt completed image job for {scene_id}: {corruption}"
-                    job.update(status="permanent_failed", error=message)
-                    terminal_error = PersistedImageJobError(message)
+                    scene_by_id[scene_id].pop("image_path", None)
+                    if int(job.get("attempts", 0)) < self.max_attempts:
+                        job.update(status="pending", error=corruption)
+                        for key in ("output_path", "mime_type", "provider", "model", "prompt_hash"):
+                            job.pop(key, None)
+                    else:
+                        message = f"corrupt completed image job for {scene_id}: {corruption}"
+                        job.update(status="permanent_failed", error=message)
+                        terminal_error = PersistedImageJobError(message)
 
         if terminal_error is not None:
             self._publish(jobs, scene_by_id, scenes)
