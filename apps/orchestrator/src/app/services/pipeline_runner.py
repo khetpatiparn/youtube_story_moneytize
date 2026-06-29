@@ -76,11 +76,23 @@ class PipelineRunner:
             state.update(images)
             state["current_node"] = "images"
             state["status"] = "image_generation_failed" if image_error else "media_ready"
-        if state.get("status") in {"media_ready", "render_ready"} and state.get("current_node") in {
-            "images",
-            "render",
-        }:
+        if (
+            state.get("status") == "media_ready" and state.get("current_node") == "images"
+        ) or (
+            self.renderer is None
+            and state.get("status") == "render_ready"
+            and state.get("current_node") == "render"
+        ):
             state = self._reconcile_audio_timeline(project_id, state)
+        if (
+            self.renderer is not None
+            and state.get("status") == "render_ready"
+            and state.get("current_node") == "render"
+        ):
+            video_path = self.renderer.render(state["render_payload_path"])
+            state.update(
+                {"video_path": video_path, "status": "rendered", "current_node": "quality"}
+            )
         current_metadata = self.projects.load_project(project_id)
         metadata = current_metadata.with_graph_result(state)
         if metadata != current_metadata:

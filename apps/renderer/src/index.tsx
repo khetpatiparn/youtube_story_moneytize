@@ -1,6 +1,7 @@
 import React from "react";
 import {
   AbsoluteFill,
+  Audio,
   Composition,
   Img,
   Sequence,
@@ -12,9 +13,6 @@ import {
 import renderPayload from "../sample/render_payload.json";
 import {calculateDurationInFrames, validateRenderPayload} from "./renderPayload.js";
 import {getMotionStyle} from "./motions/index.js";
-
-const validatedPayload = validateRenderPayload(renderPayload);
-const calculatedFrames = calculateDurationInFrames(validatedPayload);
 
 type RenderScene = {
   sceneId: string;
@@ -51,9 +49,10 @@ export const StoryScene: React.FC<{scene: RenderScene}> = ({scene}) => {
   );
 };
 
-export const StoryVideo: React.FC<RenderPayload> = ({scenes}) => {
+export const StoryVideo: React.FC<RenderPayload> = ({scenes, audioPath}) => {
   return (
     <AbsoluteFill style={{backgroundColor: "#111827"}}>
+      {audioPath ? <Audio src={staticFile(audioPath)} /> : null}
       {scenes.map((scene) => (
         <Sequence
           key={scene.sceneId}
@@ -72,11 +71,21 @@ export const RemotionRoot: React.FC = () => {
     <Composition
       id="YouTubeStory"
       component={StoryVideo}
-      width={validatedPayload.width}
-      height={validatedPayload.height}
-      fps={validatedPayload.fps}
-      durationInFrames={calculatedFrames}
+      width={renderPayload.width}
+      height={renderPayload.height}
+      fps={renderPayload.fps}
+      durationInFrames={calculateDurationInFrames(validateRenderPayload(renderPayload))}
       defaultProps={renderPayload}
+      calculateMetadata={({props}) => {
+        const payload = validateRenderPayload(props);
+        return {
+          durationInFrames: calculateDurationInFrames(payload),
+          fps: payload.fps,
+          width: payload.width,
+          height: payload.height,
+          props: payload,
+        };
+      }}
     />
   );
 };
