@@ -8,6 +8,38 @@ from unittest.mock import patch
 
 
 class LocalAudioTimelineTests(unittest.TestCase):
+    def test_wav_metadata_accepts_local_and_gemini_sample_rates(self):
+        from app.services.timeline import wav_metadata
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            for sample_rate in (22050, 24000):
+                with self.subTest(sample_rate=sample_rate):
+                    path = Path(temp_dir, f"{sample_rate}.wav")
+                    with wave.open(str(path), "wb") as audio:
+                        audio.setnchannels(1)
+                        audio.setsampwidth(2)
+                        audio.setframerate(sample_rate)
+                        audio.writeframes(b"\x00\x00" * sample_rate)
+
+                    metadata = wav_metadata(path)
+                    self.assertEqual(metadata.sample_rate, sample_rate)
+                    self.assertEqual(metadata.frame_count, sample_rate)
+                    self.assertEqual(metadata.duration_seconds, 1.0)
+
+    def test_wav_metadata_rejects_unsupported_sample_rate(self):
+        from app.services.timeline import wav_metadata
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir, "unsupported.wav")
+            with wave.open(str(path), "wb") as audio:
+                audio.setnchannels(1)
+                audio.setsampwidth(2)
+                audio.setframerate(44100)
+                audio.writeframes(b"\x00\x00" * 44100)
+
+            with self.assertRaisesRegex(ValueError, "Invalid WAV"):
+                wav_metadata(path)
+
     def test_local_tts_writes_deterministic_pcm_wav_with_exact_duration(self):
         from app.providers.local import LocalTTSProvider
         from app.services.artifacts import ArtifactStore

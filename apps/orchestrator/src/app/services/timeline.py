@@ -2,11 +2,21 @@ from __future__ import annotations
 
 import math
 import wave
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 
-def wav_duration_seconds(path: str | Path) -> float:
+@dataclass(frozen=True)
+class WavMetadata:
+    sample_rate: int
+    frame_count: int
+    duration_seconds: float
+
+
+def wav_metadata(
+    path: str | Path, allowed_sample_rates: tuple[int, ...] = (22050, 24000)
+) -> WavMetadata:
     try:
         with wave.open(str(path), "rb") as audio:
             channels = audio.getnchannels()
@@ -17,14 +27,24 @@ def wav_duration_seconds(path: str | Path) -> float:
             frame_bytes = audio.readframes(frames)
     except (EOFError, OSError, wave.Error) as error:
         raise ValueError(f"Invalid WAV file: {path}") from error
-    if (channels, sample_width, rate, compression) != (1, 2, 22050, "NONE") or frames <= 0:
+    if (
+        channels != 1
+        or sample_width != 2
+        or rate not in allowed_sample_rates
+        or compression != "NONE"
+        or frames <= 0
+    ):
         raise ValueError(f"Invalid WAV file: {path}")
     if len(frame_bytes) != frames * channels * sample_width:
         raise ValueError(f"Invalid truncated WAV file: {path}")
     duration = frames / rate
     if not math.isfinite(duration) or duration <= 0:
         raise ValueError(f"Invalid WAV duration: {path}")
-    return duration
+    return WavMetadata(sample_rate=rate, frame_count=frames, duration_seconds=duration)
+
+
+def wav_duration_seconds(path: str | Path) -> float:
+    return wav_metadata(path).duration_seconds
 
 
 def build_timeline(
