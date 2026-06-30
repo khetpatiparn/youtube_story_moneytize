@@ -39,8 +39,7 @@ class CloudflareImageProvider:
         model: str = DEFAULT_MODEL,
         steps: int = 4,
     ) -> None:
-        if not isinstance(model, str) or not model.strip():
-            raise ValueError("model must be nonempty")
+        _parse_model(model)
         if not isinstance(steps, int) or isinstance(steps, bool) or not 1 <= steps <= 8:
             raise ValueError("steps must be between 1 and 8")
         self.store = store
@@ -135,11 +134,16 @@ class CloudflareRESTImageClient:
         self._max_response_bytes = max_response_bytes
 
     def run(self, *, model: str, payload: dict[str, Any]) -> dict[str, Any]:
-        if not isinstance(model, str) or not model.strip() or not isinstance(payload, dict):
+        try:
+            owner, model_name = _parse_model(model)
+        except ValueError as error:
+            raise PermanentProviderError("Cloudflare image model is invalid") from error
+        if not isinstance(payload, dict):
             raise PermanentProviderError("Cloudflare image request is invalid")
         url = (
             "https://api.cloudflare.com/client/v4/accounts/"
-            f"{quote(self._account_id, safe='')}/ai/run/{quote(model, safe='/@')}"
+            f"{quote(self._account_id, safe='')}/ai/run/@cf/"
+            f"{quote(owner, safe='')}/{quote(model_name, safe='')}"
         )
         try:
             body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -184,3 +188,15 @@ class CloudflareRESTImageClient:
 
 def _normalize_whitespace(value: str) -> str:
     return re.sub(r"\s+", " ", value).strip()
+
+
+def _parse_model(model: str) -> tuple[str, str]:
+    if not isinstance(model, str):
+        raise ValueError("model must use canonical Cloudflare syntax")
+    match = re.fullmatch(
+        r"@cf/([A-Za-z0-9][A-Za-z0-9._-]*)/([A-Za-z0-9][A-Za-z0-9._-]*)",
+        model,
+    )
+    if match is None:
+        raise ValueError("model must use canonical Cloudflare syntax")
+    return match.group(1), match.group(2)

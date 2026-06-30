@@ -100,6 +100,9 @@ class CloudflareImageProviderTests(unittest.TestCase):
             for steps in (0, 9):
                 with self.subTest(steps=steps), self.assertRaises(ValueError):
                     self._provider(root, steps=steps)
+            for model in ("@cf/../../escape", "owner/model", "@cf/owner/.model"):
+                with self.subTest(model=model), self.assertRaises(ValueError):
+                    self._provider(root, model=model)
             provider, client = self._provider(root, steps=1)
             provider.generate(self._scene(narration="N" * 3000), "out.jpg")
             self.assertLessEqual(len(client.calls[0]["payload"]["prompt"]), 2048)
@@ -255,6 +258,38 @@ class CloudflareRESTImageClientTests(unittest.TestCase):
         for kwargs in ({"timeout_seconds": 0}, {"max_response_bytes": 0}):
             with self.subTest(kwargs=kwargs), self.assertRaises(ValueError):
                 CloudflareRESTImageClient("account", "token", **kwargs)
+
+    def test_rejects_hostile_models_before_network_access(self):
+        from app.providers.base import PermanentProviderError
+
+        hostile_models = [
+            "@cf/../../escape",
+            "@cf/owner/model/extra",
+            "@cf/owner/model?query",
+            "@cf/owner/model#fragment",
+            "@cf/owner/model\nheader",
+            "@cf/.owner/model",
+            "@cf/owner/.model",
+            "@cf/owner/..",
+        ]
+        for model in hostile_models:
+            with self.subTest(model=model), patch(
+                "app.providers.cloudflare_image.urlopen"
+            ) as mocked_urlopen:
+                with self.assertRaises(PermanentProviderError) as raised:
+                    self._client().run(model=model, payload={"prompt": "private"})
+                mocked_urlopen.assert_not_called()
+                self.assertNotIn(model, str(raised.exception))
+
+    def test_accepts_safe_model_segment_metacharacters(self):
+        envelope = {"success": True, "result": {"image": "abc"}, "errors": []}
+        with patch(
+            "app.providers.cloudflare_image.urlopen",
+            return_value=FakeHTTPResponse(json.dumps(envelope).encode()),
+        ) as mocked_urlopen:
+            self._client().run(model="@cf/owner-1/model_v2.0", payload={})
+        request = mocked_urlopen.call_args.args[0]
+        self.assertTrue(request.full_url.endswith("/ai/run/@cf/owner-1/model_v2.0"))
 
 
 if __name__ == "__main__":
