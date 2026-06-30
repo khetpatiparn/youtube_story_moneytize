@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from xml.etree import ElementTree
@@ -58,16 +59,38 @@ def _validate_svg(content: bytes) -> ImageMetadata:
 
 def _validate_jpeg(content: bytes) -> ImageMetadata:
     try:
-        with Image.open(io.BytesIO(content)) as image:
-            image.verify()
-        with Image.open(io.BytesIO(content)) as image:
-            image.load()
-            image_format = image.format
-            width, height = image.size
-    except (OSError, SyntaxError, ValueError, UnidentifiedImageError, Image.DecompressionBombError) as error:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with Image.open(io.BytesIO(content)) as image:
+                image.verify()
+            image = Image.open(io.BytesIO(content))
+    except (
+        OSError,
+        SyntaxError,
+        ValueError,
+        UnidentifiedImageError,
+        Image.DecompressionBombError,
+        Image.DecompressionBombWarning,
+    ) as error:
         raise ValueError("output JPEG is invalid") from error
-    if image_format != "JPEG":
-        raise ValueError("output image format must be JPEG")
-    if not 512 <= width <= 4096 or not 512 <= height <= 4096:
-        raise ValueError("output JPEG dimensions must each be between 512 and 4096 pixels")
+
+    with image:
+        image_format = image.format
+        width, height = image.size
+        if image_format != "JPEG":
+            raise ValueError("output image format must be JPEG")
+        if not 512 <= width <= 4096 or not 512 <= height <= 4096:
+            raise ValueError("output JPEG dimensions must each be between 512 and 4096 pixels")
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", Image.DecompressionBombWarning)
+                image.load()
+        except (
+            OSError,
+            SyntaxError,
+            ValueError,
+            Image.DecompressionBombError,
+            Image.DecompressionBombWarning,
+        ) as error:
+            raise ValueError("output JPEG is invalid") from error
     return ImageMetadata("image/jpeg", width, height, image_format)

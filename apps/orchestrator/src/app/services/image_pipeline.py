@@ -29,7 +29,7 @@ class ImagePipeline:
         self.max_attempts = max_attempts
         self.output_extension = getattr(provider, "output_extension", "svg")
         if self.output_extension not in {"svg", "jpg"}:
-            raise ValueError("image provider output_extension must be svg or jpg")
+            raise PermanentProviderError("unsupported image output extension")
 
     def generate(
         self,
