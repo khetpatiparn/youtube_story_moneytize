@@ -8,8 +8,10 @@ version = "0.1.0"
 description = "POC for a recoverable YouTube story automation workflow."
 requires-python = ">=3.11"
 dependencies = [
+    "google-genai>=1,<2",
     "langgraph>=0.2",
     "pydantic>=2",
+    "python-dotenv>=1,<2",
 ]
 
 [project.optional-dependencies]

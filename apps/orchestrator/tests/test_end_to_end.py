@@ -17,6 +17,7 @@ class EndToEndLocalPipelineTests(unittest.TestCase):
             checkpoint = root / "checkpoints.sqlite"
             env = os.environ.copy()
             env["PYTHONPATH"] = str(source_dir)
+            env["TTS_PROVIDER"] = "local"
 
             def run(*arguments):
                 result = subprocess.run(

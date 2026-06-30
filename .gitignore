@@ -28,6 +28,8 @@ out/
 projects/
 data/checkpoints.sqlite
 data/checkpoints.sqlite-*
+data/*.sqlite
+data/*.sqlite-*
 data/cache/
 apps/renderer/public/projects/
 apps/dashboard/public/dashboard-data.json
