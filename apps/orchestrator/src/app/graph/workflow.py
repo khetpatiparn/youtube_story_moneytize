@@ -26,7 +26,7 @@ def build_hello_world_graph() -> Any:
     except ModuleNotFoundError:
         return SimpleGraph([initialize_project])
 
-    builder = StateGraph(dict)
+    builder = StateGraph(VideoProjectState)
     builder.add_node("initialize_project", initialize_project)
     builder.add_edge(START, "initialize_project")
     builder.add_edge("initialize_project", END)
