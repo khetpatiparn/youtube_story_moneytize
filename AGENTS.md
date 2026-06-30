@@ -22,6 +22,7 @@ Use `$env:PYTHONPATH='apps/orchestrator/src'` unless installed editable.
 - `python -m app approve-script --project-id project_001 --approved --reviewer human` records approval.
 - `python -m app approve-final --project-id project_001 --changes-requested --reviewer human` records final review.
 - `python -m app report --project-id project_001 --video-path render/story.mp4 --quality-score 0.91` writes reports.
+- `python -m app smoke-google-tts --text "..." --output tmp/gemini-tts-smoke.wav` makes one intentional live Gemini TTS request.
 - `npm.cmd run test:renderer` validates static renderer payloads.
 - `npm.cmd run render:sample` renders `renders/sample.mp4`.
 - `npm.cmd run test:dashboard` validates dashboard data loading and UI contracts.
@@ -37,6 +38,8 @@ Prioritize deterministic tests for prompt hashing, provider contracts, approvals
 
 The local end-to-end test invokes Remotion and requires installed Node dependencies. Image retry is per scene and bounded to three total attempts unless the CLI explicitly overrides it. A render failure is retried by a later `resume`, never by an unbounded loop. Keep the latest validated checkpoint and do not delete fingerprint manifests when diagnosing recovery.
 
+Default tests must set or preserve `TTS_PROVIDER=local`; they must never discover a developer `.env` and consume Gemini quota. Test Google request behavior with an injected fake client. Run the live smoke command only as an explicit verification step.
+
 ## Commit & Pull Request Guidelines
 Use short imperative commits. Do not implement on `main` unless approved. PRs should link `/goals`, describe impact, list validation, note services, include render samples for video changes, and state rollback.
 
@@ -49,6 +52,8 @@ At feature end, update `AGENTS.md` for new commands, rules, tests, recovery step
 ## Security & Config
 Store secrets in `.env` and commit only `.env.example`. Never log keys or tokens. Validate file names, MIME types, sizes, and project paths. Route external operations through reviewed wrappers.
 
+Gemini TTS publishes mono PCM16 WAV at 24 kHz, retries only transient failures with a finite bound, and has no automatic local fallback. Smoke outputs must remain under repository `tmp/`.
+
 The dashboard is read-only in the first slice; do not add pipeline execution, approval writes, or upload actions without a new goal and tests.
 
-Local content, SVG image, and tone-WAV providers are deterministic POC adapters. They do not prove production model quality or external-provider readiness. YouTube upload remains out of scope.
+Local content, SVG image, and tone-WAV providers are deterministic POC adapters. Gemini TTS is Preview and does not prove production capacity. AI-generated images and YouTube upload remain out of scope.

@@ -1,6 +1,6 @@
 # YouTube Story Automation
 
-POC for a recoverable YouTube story automation workflow. The local path now runs end to end without API credentials: deterministic content, SVG scenes, WAV narration, SQLite checkpoints, two human approval gates, runtime Remotion rendering, media QA reports, and the read-only dashboard.
+POC for a recoverable YouTube story automation workflow. The deterministic local path runs end to end without credentials, while approved runs can use Gemini for natural Thai narration.
 
 ## Current Orchestrator Commands
 
@@ -23,12 +23,25 @@ Generated runtime data goes under `projects/{project_id}/`: outline and script i
 
 Resume is idempotent. Completed images, audio, renders, and reports are fingerprinted or validated before reuse. A failed render remains at `render_ready`; fix the cause and run `resume` again. Image retry is limited to three total attempts per failed scene by default (`--max-image-attempts` changes the bound).
 
+## Gemini Thai TTS
+
+Copy `.env.example` to ignored `.env`, set `GEMINI_API_KEY`, and change `TTS_PROVIDER=google`. The defaults use `gemini-3.1-flash-tts-preview` with the `Charon` voice. Verify credentials with one explicit request:
+
+```powershell
+$env:PYTHONPATH='apps/orchestrator/src'
+python -m app smoke-google-tts --text "สวัสดี นี่คือเสียงทดสอบ" --output tmp/gemini-tts-smoke.wav
+```
+
+Normal `run` stops before external TTS. After script approval, `resume` selects the configured provider, splits narration into bounded chunks, retries transient failures up to `GEMINI_TTS_MAX_ATTEMPTS`, concatenates PCM, and atomically publishes a mono PCM16 WAV at 24 kHz. It does not silently fall back to tones when Google fails. Set `TTS_PROVIDER=local` for deterministic, quota-free tests.
+
+Gemini TTS is a Preview model: availability, model names, quality, and Free Tier rate limits can change. Free Tier capacity is not guaranteed. Review the current Google AI Studio pricing, rate limits, and data-use terms before production use; prompts and outputs on unpaid services may be handled differently from paid services. Never commit `.env` or paste credentials into logs.
+
 ## Local Provider Limitations
 
 - Story content is deterministic template output, not a production LLM response.
 - Images are deterministic SVG review assets, not production illustrations or character-consistent art.
-- Narration is synthetic tones in a valid WAV, not natural speech.
-- External LLM, image, and TTS adapters still require implementation, credentials, quota handling, and provider-specific validation.
+- Local narration is synthetic tones; Gemini Thai narration is available only for intentional credentialed runs.
+- External LLM and AI-image adapters still require implementation, credentials, quota handling, and provider-specific validation.
 - YouTube upload, publishing, analytics, and fully autonomous operation are not implemented.
 
 ## Current Renderer Commands

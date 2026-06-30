@@ -1,5 +1,7 @@
 # Goal: Gemini Thai TTS Provider
 
+Status: completed on 2026-06-30.
+
 ## Outcome
 
 Replace synthetic tone narration in normal local runs with controllable Thai speech
@@ -28,6 +30,15 @@ from the Gemini API Free Tier while preserving deterministic, credential-free te
   `git diff --check` pass.
 - README, AGENTS, and `.env.example` document setup, Free Tier limits, preview risk,
   data-use caveat, and local test fallback.
+
+## Completion Evidence
+
+- 113 orchestrator tests pass with one Windows symlink test skipped; default tests make no API calls.
+- Live smoke produced a 24 kHz Charon WAV with a positive 3.64-second duration.
+- `gemini_tts_sample` reached final approval with `voice_provider=google`, a validated
+  19.24-second WAV, a 3,075,859-byte MP4, QA score 1.0, and dashboard export data.
+- Renderer and dashboard tests/build are included in the final verification record.
+- AI-generated scene images remain a separate follow-up goal; this slice retains local SVGs.
 
 ## Out of Scope
 
