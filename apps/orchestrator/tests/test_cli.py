@@ -16,6 +16,7 @@ class CliTests(unittest.TestCase):
             env["PYTHONPATH"] = str(source_dir)
             checkpoint_db = str(Path(temp_dir) / "checkpoints.sqlite")
             env["CHECKPOINT_DB"] = checkpoint_db
+            env["TTS_PROVIDER"] = "local"
 
             create_result = subprocess.run(
                 [
@@ -93,6 +94,7 @@ class CliTests(unittest.TestCase):
             self.assertEqual(run_payload["waiting_for"], "script")
             self.assertTrue(Path(checkpoint_db).is_file())
 
+            env["TTS_PROVIDER"] = "unknown-but-unused-before-approval"
             resume_result = subprocess.run(
                 [
                     sys.executable,
@@ -117,6 +119,7 @@ class CliTests(unittest.TestCase):
             self.assertEqual(resume_payload["project_id"], "project_001")
             self.assertEqual(resume_payload["status"], "awaiting_script_approval")
             self.assertEqual(resume_payload["current_node"], "script_approval")
+            env["TTS_PROVIDER"] = "local"
 
             script_approval_result = subprocess.run(
                 [

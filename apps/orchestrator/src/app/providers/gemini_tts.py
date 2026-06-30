@@ -106,7 +106,8 @@ class GeminiTTSProvider:
         chunks = self._chunks(text)
         if not chunks:
             raise PermanentProviderError("Narration text is required")
-        voice = voice_id.strip() or self.voice
+        del voice_id
+        voice = self.voice
         pcm_parts = [await self._generate_chunk(chunk, voice) for chunk in chunks]
         pcm = b"".join(pcm_parts)
         buffer = io.BytesIO()
