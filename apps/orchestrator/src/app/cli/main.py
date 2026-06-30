@@ -4,12 +4,19 @@ import argparse
 import asyncio
 import json
 import os
+import time
 from collections.abc import Mapping
 from functools import partial
 from pathlib import Path
-from typing import Sequence
+from typing import Callable, Sequence
 
-from app.providers.base import ProviderError
+from app.providers.base import PermanentProviderError, ProviderError, RetryableProviderError
+from app.providers.cloudflare_image import (
+    DEFAULT_MODEL as DEFAULT_CLOUDFLARE_IMAGE_MODEL,
+    CloudflareImageClient,
+    CloudflareImageProvider,
+    CloudflareRESTImageClient,
+)
 from app.providers.gemini_tts import GeminiSpeechClient, GeminiTTSProvider, GoogleGenAISpeechClient
 from app.repositories.checkpoint_repository import CheckpointRepository
 from app.repositories.project_repository import ProjectRepository
@@ -21,6 +28,7 @@ from app.services.approval_reporting import (
 )
 from app.services.artifacts import ArtifactStore
 from app.services.config import build_image_provider, build_tts_provider, load_environment
+from app.services.image_validation import validate_image_file
 from app.services.pipeline_runner import PipelineRunner
 from app.services.quality import ffprobe_duration
 from app.services.rendering import RemotionRenderer
@@ -48,6 +56,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _write_project_report(args)
     if args.command == "smoke-google-tts":
         return _smoke_google_tts(args)
+    if args.command == "smoke-cloudflare-image":
+        return _smoke_cloudflare_image(args)
 
     parser.print_help()
     return 1
@@ -98,6 +108,12 @@ def _build_parser() -> argparse.ArgumentParser:
     smoke = subparsers.add_parser("smoke-google-tts", help="Run one intentional Gemini TTS request")
     smoke.add_argument("--text", required=True)
     smoke.add_argument("--output", default="tmp/gemini-tts-smoke.wav")
+
+    image_smoke = subparsers.add_parser(
+        "smoke-cloudflare-image", help="Run one intentional Cloudflare image request"
+    )
+    image_smoke.add_argument("--prompt", required=True)
+    image_smoke.add_argument("--output", default="tmp/cloudflare-image-smoke.jpg")
 
     return parser
 
@@ -210,6 +226,80 @@ def _smoke_google_tts(
                 "sample_rate": metadata.sample_rate,
                 "duration_seconds": metadata.duration_seconds,
                 "output_path": result.output_path,
+            },
+            ensure_ascii=False,
+        )
+    )
+    return 0
+
+
+def _smoke_cloudflare_image(
+    args: argparse.Namespace,
+    *,
+    environ: Mapping[str, str] | None = None,
+    client: CloudflareImageClient | None = None,
+    sleep: Callable[[float], None] = time.sleep,
+) -> int:
+    values = os.environ if environ is None else environ
+    prompt = args.prompt.strip() if isinstance(args.prompt, str) else ""
+    if not prompt:
+        raise SystemExit("Cloudflare image smoke prompt must be nonempty")
+    output = Path(args.output)
+    if output.is_absolute() or ".." in output.parts or not output.parts or output.parts[0] != "tmp":
+        raise SystemExit("Smoke output must be a relative path under tmp/")
+    if output.suffix.lower() != ".jpg":
+        raise SystemExit("Smoke output under tmp/ must use a .jpg extension")
+
+    account_id = values.get("CLOUDFLARE_ACCOUNT_ID", "").strip()
+    api_token = values.get("CLOUDFLARE_API_TOKEN", "").strip()
+    if not account_id:
+        raise SystemExit("CLOUDFLARE_ACCOUNT_ID is required for Cloudflare image smoke testing")
+    if not api_token:
+        raise SystemExit("CLOUDFLARE_API_TOKEN is required for Cloudflare image smoke testing")
+    model = values.get("CLOUDFLARE_IMAGE_MODEL", DEFAULT_CLOUDFLARE_IMAGE_MODEL).strip()
+    try:
+        steps = int(values.get("CLOUDFLARE_IMAGE_STEPS", "4"))
+        max_attempts = int(values.get("CLOUDFLARE_IMAGE_MAX_ATTEMPTS", "3"))
+        if not 1 <= max_attempts <= 5:
+            raise ValueError("CLOUDFLARE_IMAGE_MAX_ATTEMPTS must be between 1 and 5")
+        image_client = client or CloudflareRESTImageClient(account_id, api_token)
+        provider = CloudflareImageProvider(
+            ArtifactStore(_repository_root()), image_client, model=model, steps=steps
+        )
+    except (TypeError, ValueError) as error:
+        raise SystemExit(str(error)) from error
+
+    scene = {
+        "scene_id": "cloudflare-image-smoke",
+        "title": "Cloudflare image smoke test",
+        "prompt": prompt,
+        "narration": "",
+    }
+    for attempt in range(1, max_attempts + 1):
+        try:
+            result = provider.generate(scene, output.as_posix())
+            break
+        except RetryableProviderError as error:
+            if attempt == max_attempts:
+                raise SystemExit("Cloudflare image request failed after retries") from error
+            sleep(min(2 ** (attempt - 1), 4))
+        except PermanentProviderError as error:
+            raise SystemExit("Cloudflare image request failed") from error
+
+    try:
+        metadata = validate_image_file(_repository_root() / result["output_path"], "image/jpeg")
+    except (KeyError, TypeError, ValueError, OSError) as error:
+        raise SystemExit("Cloudflare image smoke output is invalid") from error
+    print(
+        json.dumps(
+            {
+                "model": result["model"],
+                "seed": result["seed"],
+                "steps": result["steps"],
+                "width": metadata.width,
+                "height": metadata.height,
+                "mime_type": metadata.mime_type,
+                "output_path": result["output_path"],
             },
             ensure_ascii=False,
         )

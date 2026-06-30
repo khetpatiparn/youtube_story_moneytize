@@ -95,6 +95,8 @@ class CloudflareImageProvider:
         return {
             "provider": self.provider,
             "model": self.model,
+            "seed": seed,
+            "steps": self.steps,
             "prompt_hash": hashlib.sha256(prompt.encode("utf-8", errors="surrogatepass")).hexdigest(),
             "output_path": relative_path,
             "mime_type": "image/jpeg",
