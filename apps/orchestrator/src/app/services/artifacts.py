@@ -6,6 +6,14 @@ from pathlib import Path
 from typing import Any
 
 
+_WINDOWS_INVALID_CHARS = frozenset('<>:"|?*')
+_WINDOWS_RESERVED_BASENAMES = frozenset(
+    {"CON", "PRN", "AUX", "NUL"}
+    | {f"COM{number}" for number in range(1, 10)}
+    | {f"LPT{number}" for number in range(1, 10)}
+)
+
+
 class ArtifactStore:
     _locks_guard = threading.Lock()
     _destination_locks: dict[str, threading.Lock] = {}
@@ -21,6 +29,16 @@ class ArtifactStore:
             raise ValueError("Artifact path must be relative")
         if ".." in relative.parts:
             raise ValueError("Artifact path cannot contain parent traversal")
+        for component in relative.parts:
+            if (
+                any(
+                    character in _WINDOWS_INVALID_CHARS or ord(character) < 32
+                    for character in component
+                )
+                or component.endswith((".", " "))
+                or component.split(".", 1)[0].upper() in _WINDOWS_RESERVED_BASENAMES
+            ):
+                raise ValueError("Artifact path contains a non-portable component")
 
         candidate = self.root / relative
         resolved = candidate.parent.resolve() / candidate.name

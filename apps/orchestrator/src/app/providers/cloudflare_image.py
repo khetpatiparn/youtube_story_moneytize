@@ -91,7 +91,10 @@ class CloudflareImageProvider:
         except (KeyError, TypeError, ValueError, binascii.Error) as error:
             raise PermanentProviderError("Cloudflare image response is invalid") from error
 
-        relative_path = self.store.publish_bytes_set({output_path: content})[output_path]
+        try:
+            relative_path = self.store.publish_bytes_set({output_path: content})[output_path]
+        except OSError as error:
+            raise PermanentProviderError("Cloudflare image output could not be published") from error
         return {
             "provider": self.provider,
             "model": self.model,

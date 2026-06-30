@@ -179,6 +179,24 @@ class CloudflareImageProviderTests(unittest.TestCase):
             self.assertNotIn("raw response", str(raised.exception))
             self.assertEqual(output.read_bytes(), jpeg_bytes())
 
+    def test_publication_os_error_is_permanent_and_sanitized(self):
+        from app.providers.base import PermanentProviderError
+
+        with tempfile.TemporaryDirectory() as root:
+            provider, client = self._provider(root)
+            with patch.object(
+                provider.store,
+                "publish_bytes_set",
+                side_effect=OSError("token-secret private prompt raw path"),
+            ), self.assertRaises(PermanentProviderError) as raised:
+                provider.generate(self._scene(), "images/out.jpg")
+
+            self.assertEqual(len(client.calls), 1)
+            message = str(raised.exception).lower()
+            self.assertNotIn("token-secret", message)
+            self.assertNotIn("private prompt", message)
+            self.assertNotIn("raw path", message)
+
 
 class CloudflareRESTImageClientTests(unittest.TestCase):
     def _client(self, **kwargs):
