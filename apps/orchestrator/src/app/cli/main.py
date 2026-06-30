@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import os
+from collections.abc import Mapping
 from functools import partial
 from pathlib import Path
 from typing import Sequence
 
 from app.providers.base import ProviderError
+from app.providers.gemini_tts import GeminiSpeechClient, GeminiTTSProvider, GoogleGenAISpeechClient
 from app.repositories.checkpoint_repository import CheckpointRepository
 from app.repositories.project_repository import ProjectRepository
 from app.schemas.project import CreateProjectRequest
@@ -21,6 +24,7 @@ from app.services.config import build_tts_provider, load_environment
 from app.services.pipeline_runner import PipelineRunner
 from app.services.quality import ffprobe_duration
 from app.services.rendering import RemotionRenderer
+from app.services.timeline import wav_metadata
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -42,6 +46,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _record_final_approval(args)
     if args.command == "report":
         return _write_project_report(args)
+    if args.command == "smoke-google-tts":
+        return _smoke_google_tts(args)
 
     parser.print_help()
     return 1
@@ -88,6 +94,10 @@ def _build_parser() -> argparse.ArgumentParser:
     report.add_argument("--video-path", required=True)
     report.add_argument("--quality-score", required=True, type=float)
     report.add_argument("--issue", action="append", default=[])
+
+    smoke = subparsers.add_parser("smoke-google-tts", help="Run one intentional Gemini TTS request")
+    smoke.add_argument("--text", required=True)
+    smoke.add_argument("--output", default="tmp/gemini-tts-smoke.wav")
 
     return parser
 
@@ -157,6 +167,53 @@ def _write_project_report(args: argparse.Namespace) -> int:
         )
     )
     print(json.dumps(paths.to_dict(), ensure_ascii=False))
+    return 0
+
+
+def _smoke_google_tts(
+    args: argparse.Namespace,
+    *,
+    environ: Mapping[str, str] | None = None,
+    client: GeminiSpeechClient | None = None,
+) -> int:
+    values = os.environ if environ is None else environ
+    output = Path(args.output)
+    if output.is_absolute() or ".." in output.parts or not output.parts or output.parts[0] != "tmp":
+        raise SystemExit("Smoke output must be a relative path under tmp/")
+    if output.suffix.lower() != ".wav":
+        raise SystemExit("Smoke output under tmp/ must use a .wav extension")
+    api_key = values.get("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        raise SystemExit("GEMINI_API_KEY is required for Google TTS smoke testing")
+    model = values.get("GEMINI_TTS_MODEL", "gemini-3.1-flash-tts-preview").strip()
+    voice = values.get("GEMINI_TTS_VOICE", "Charon").strip()
+    try:
+        max_attempts = int(values.get("GEMINI_TTS_MAX_ATTEMPTS", "3"))
+        speech_client = client or GoogleGenAISpeechClient(api_key)
+        provider = GeminiTTSProvider(
+            ArtifactStore(_repository_root()),
+            api_key=api_key,
+            model=model,
+            voice=voice,
+            max_attempts=max_attempts,
+            client=speech_client,
+        )
+        result = asyncio.run(provider.synthesize(args.text, voice, output.as_posix(), {}))
+        metadata = wav_metadata(_repository_root() / result.output_path, allowed_sample_rates=(24000,))
+    except (ValueError, ProviderError) as error:
+        raise SystemExit(str(error)) from error
+    print(
+        json.dumps(
+            {
+                "model": result.model,
+                "voice": result.voice_id,
+                "sample_rate": metadata.sample_rate,
+                "duration_seconds": metadata.duration_seconds,
+                "output_path": result.output_path,
+            },
+            ensure_ascii=False,
+        )
+    )
     return 0
 
 
