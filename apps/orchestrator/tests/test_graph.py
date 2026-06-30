@@ -16,6 +16,9 @@ class GraphTests(unittest.TestCase):
         )
 
         self.assertEqual(result["project_id"], "project_001")
+        self.assertEqual(result["topic"], "A small kindness becomes a legend")
+        self.assertEqual(result["target_duration_seconds"], 180)
+        self.assertEqual(result["channel_style_profile"], "simple_story_th")
         self.assertEqual(result["status"], "initialized")
         self.assertEqual(result["current_node"], "initialize_project")
         self.assertIn("updated_at", result)
