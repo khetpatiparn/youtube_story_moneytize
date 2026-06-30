@@ -20,7 +20,7 @@ from app.services.approval_reporting import (
     ReportRequest,
 )
 from app.services.artifacts import ArtifactStore
-from app.services.config import build_tts_provider, load_environment
+from app.services.config import build_image_provider, build_tts_provider, load_environment
 from app.services.pipeline_runner import PipelineRunner
 from app.services.quality import ffprobe_duration
 from app.services.rendering import RemotionRenderer
@@ -129,7 +129,7 @@ def _run_project(args: argparse.Namespace) -> int:
 
 def _resume_project(args: argparse.Namespace) -> int:
     try:
-        result = _build_pipeline_runner(args, configure_tts=True).resume(args.project_id)
+        result = _build_pipeline_runner(args).resume(args.project_id)
     except (ValueError, ProviderError) as error:
         raise SystemExit(str(error)) from error
     print(json.dumps(result, ensure_ascii=False))
@@ -245,22 +245,29 @@ def _repository_root() -> Path:
     return Path(__file__).resolve().parents[5]
 
 
-def _build_pipeline_runner(
-    args: argparse.Namespace, *, configure_tts: bool = False
-) -> PipelineRunner:
+def _build_pipeline_runner(args: argparse.Namespace) -> PipelineRunner:
     repository = ProjectRepository(Path(args.projects_dir))
     checkpoints = CheckpointRepository(Path(args.checkpoint_db))
     repository_root = _repository_root()
     project_dir = repository.project_dir(args.project_id)
     renderer = RemotionRenderer(repository_root, project_dir, args.project_id)
-    checkpoint = checkpoints.load_latest(args.project_id) if configure_tts else None
-    needs_tts = checkpoint is not None and checkpoint.state.get("script_approved") is True
-    tts_provider = build_tts_provider(ArtifactStore(project_dir), os.environ) if needs_tts else None
+    checkpoint = checkpoints.load_latest(args.project_id)
+    needs_external_media = (
+        checkpoint is not None and checkpoint.state.get("script_approved") is True
+    )
+    store = ArtifactStore(project_dir)
+    image_provider = (
+        build_image_provider(store, os.environ) if needs_external_media else None
+    )
+    tts_provider = (
+        build_tts_provider(store, os.environ) if needs_external_media else None
+    )
     return PipelineRunner(
         repository,
         checkpoints,
         renderer=renderer,
         video_probe=partial(ffprobe_duration, repository_root=repository_root),
+        image_provider=image_provider,
         tts_provider=tts_provider,
         max_image_attempts=args.max_image_attempts,
         tts_words_per_second=args.tts_words_per_second,

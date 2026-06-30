@@ -5,9 +5,47 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 
 class CliTests(unittest.TestCase):
+    def test_pipeline_runner_injects_selected_media_providers_after_script_approval(self):
+        from app.cli.main import _build_pipeline_runner
+
+        repository = MagicMock()
+        repository.project_dir.return_value = Path("project-root")
+        checkpoints = MagicMock()
+        checkpoints.load_latest.return_value = SimpleNamespace(
+            state={"script_approved": True}
+        )
+        image_provider = object()
+        tts_provider = object()
+        runner = object()
+        args = SimpleNamespace(
+            projects_dir="projects",
+            checkpoint_db="checkpoints.sqlite",
+            project_id="project_001",
+            max_image_attempts=3,
+            tts_words_per_second=2.5,
+        )
+
+        with (
+            patch("app.cli.main.ProjectRepository", return_value=repository),
+            patch("app.cli.main.CheckpointRepository", return_value=checkpoints),
+            patch("app.cli.main.RemotionRenderer"),
+            patch("app.cli.main.build_image_provider", return_value=image_provider) as build_image,
+            patch("app.cli.main.build_tts_provider", return_value=tts_provider) as build_tts,
+            patch("app.cli.main.PipelineRunner", return_value=runner) as runner_type,
+        ):
+            result = _build_pipeline_runner(args)
+
+        self.assertIs(result, runner)
+        build_image.assert_called_once()
+        build_tts.assert_called_once()
+        self.assertIs(runner_type.call_args.kwargs["image_provider"], image_provider)
+        self.assertIs(runner_type.call_args.kwargs["tts_provider"], tts_provider)
+
     def test_create_and_status_commands_use_project_directory(self):
         source_dir = Path(__file__).resolve().parents[1] / "src"
 
@@ -17,6 +55,7 @@ class CliTests(unittest.TestCase):
             checkpoint_db = str(Path(temp_dir) / "checkpoints.sqlite")
             env["CHECKPOINT_DB"] = checkpoint_db
             env["TTS_PROVIDER"] = "local"
+            env["IMAGE_PROVIDER"] = "local"
 
             create_result = subprocess.run(
                 [
@@ -95,6 +134,7 @@ class CliTests(unittest.TestCase):
             self.assertTrue(Path(checkpoint_db).is_file())
 
             env["TTS_PROVIDER"] = "unknown-but-unused-before-approval"
+            env["IMAGE_PROVIDER"] = "unknown-but-unused-before-approval"
             resume_result = subprocess.run(
                 [
                     sys.executable,
@@ -120,6 +160,7 @@ class CliTests(unittest.TestCase):
             self.assertEqual(resume_payload["status"], "awaiting_script_approval")
             self.assertEqual(resume_payload["current_node"], "script_approval")
             env["TTS_PROVIDER"] = "local"
+            env["IMAGE_PROVIDER"] = "local"
 
             script_approval_result = subprocess.run(
                 [
