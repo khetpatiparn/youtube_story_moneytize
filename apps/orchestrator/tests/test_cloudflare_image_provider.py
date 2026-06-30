@@ -52,7 +52,11 @@ class CloudflareImageProviderTests(unittest.TestCase):
         from app.services.artifacts import ArtifactStore
 
         if response is self._DEFAULT:
-            response = {"result": {"image": base64.b64encode(jpeg_bytes()).decode()}}
+            response = {
+                "success": True,
+                "result": {"image": base64.b64encode(jpeg_bytes()).decode()},
+                "errors": [],
+            }
         client = FakeClient(response)
         return CloudflareImageProvider(ArtifactStore(root), client, **kwargs), client
 
@@ -84,6 +88,7 @@ class CloudflareImageProviderTests(unittest.TestCase):
             self.assertIn("banyan trees", payload["prompt"])
             self.assertLessEqual(len(payload["prompt"]), 2048)
             self.assertEqual(payload["seed"], client.calls[1]["payload"]["seed"])
+            self.assertGreater(payload["seed"], 0)
             self.assertLessEqual(payload["seed"], 2**31 - 1)
             self.assertNotIn("credential", json.dumps(payload).lower())
             self.assertEqual(Path(root, result["output_path"]).read_bytes(), jpeg_bytes())
@@ -96,16 +101,47 @@ class CloudflareImageProviderTests(unittest.TestCase):
                 with self.subTest(steps=steps), self.assertRaises(ValueError):
                     self._provider(root, steps=steps)
             provider, client = self._provider(root, steps=1)
-            provider.generate(self._scene(title="T" * 3000, prompt="P" * 3000), "out.jpg")
+            provider.generate(self._scene(narration="N" * 3000), "out.jpg")
             self.assertLessEqual(len(client.calls[0]["payload"]["prompt"]), 2048)
             with self.assertRaises(PermanentProviderError):
                 provider.generate(self._scene(scene_id=""), "next.jpg")
+
+    def test_prompt_normalizes_whitespace_and_only_truncates_narration(self):
+        with tempfile.TemporaryDirectory() as root:
+            provider, client = self._provider(root)
+            scene = self._scene(
+                title="  The\n clever\t rabbit  ",
+                prompt=" banyan\r\n trees   at dusk ",
+                narration="  a   calm\nplan  " + (" ending" * 1000),
+            )
+            provider.generate(scene, "out.jpg")
+            prompt = client.calls[0]["payload"]["prompt"]
+            self.assertIn("Title: The clever rabbit.", prompt)
+            self.assertIn("Scene: banyan trees at dusk.", prompt)
+            self.assertIn("Narration: a calm plan", prompt)
+            self.assertNotIn("\n", prompt)
+            self.assertNotIn("  ", prompt)
+            self.assertLessEqual(len(prompt), 2048)
+
+    def test_oversized_fixed_prompt_is_rejected_before_client_call(self):
+        from app.providers.base import PermanentProviderError
+
+        with tempfile.TemporaryDirectory() as root:
+            provider, client = self._provider(root)
+            with self.assertRaises(PermanentProviderError) as raised:
+                provider.generate(self._scene(prompt="P" * 3000), "out.jpg")
+            self.assertEqual(client.calls, [])
+            self.assertNotIn("P" * 20, str(raised.exception))
 
     def test_invalid_responses_and_paths_preserve_existing_jpeg(self):
         from app.providers.base import PermanentProviderError
 
         failures = [
             {},
+            {"result": {"image": base64.b64encode(jpeg_bytes()).decode()}},
+            {"success": False, "result": {"image": base64.b64encode(jpeg_bytes()).decode()}},
+            {"success": True, "result": "wrong", "errors": []},
+            {"success": True, "result": {"image": base64.b64encode(jpeg_bytes()).decode()}, "errors": "wrong"},
             {"result": {}},
             {"result": {"image": "%%%"}},
             {"result": {"image": base64.b64encode(b"not jpeg").decode()}},

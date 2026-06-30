@@ -4,6 +4,7 @@ import base64
 import binascii
 import hashlib
 import json
+import re
 import socket
 from typing import Any, Protocol
 from urllib.error import HTTPError, URLError
@@ -62,7 +63,8 @@ class CloudflareImageProvider:
         seed_material = "\0".join((self.model, scene_id, prompt)).encode(
             "utf-8", errors="surrogatepass"
         )
-        seed = int.from_bytes(hashlib.sha256(seed_material).digest()[:4], "big") & 0x7FFFFFFF
+        digest_value = int.from_bytes(hashlib.sha256(seed_material).digest(), "big")
+        seed = (digest_value % ((1 << 31) - 1)) + 1
         payload = {"prompt": prompt, "steps": self.steps, "seed": seed}
 
         try:
@@ -75,6 +77,13 @@ class CloudflareImageProvider:
             raise PermanentProviderError("Cloudflare image request failed") from error
 
         try:
+            if (
+                not isinstance(envelope, dict)
+                or envelope.get("success") is not True
+                or not isinstance(envelope.get("result"), dict)
+                or not isinstance(envelope.get("errors"), list)
+            ):
+                raise ValueError
             encoded = envelope["result"]["image"]
             if not isinstance(encoded, str) or not encoded:
                 raise ValueError
@@ -94,12 +103,13 @@ class CloudflareImageProvider:
 
     @staticmethod
     def _compose_prompt(scene: dict[str, Any]) -> str:
-        title = str(scene.get("title", "")).strip()
-        scene_prompt = str(scene.get("prompt", "")).strip()
-        narration = str(scene.get("narration", "")).strip()
-        fixed = f"{VISUAL_BIBLE} Title: {title}. Scene: {scene_prompt}. Narration: "
-        if len(fixed) >= MAX_PROMPT_CHARS:
-            return fixed[:MAX_PROMPT_CHARS]
+        visual_bible = _normalize_whitespace(VISUAL_BIBLE)
+        title = _normalize_whitespace(str(scene.get("title", "")))
+        scene_prompt = _normalize_whitespace(str(scene.get("prompt", "")))
+        narration = _normalize_whitespace(str(scene.get("narration", "")))
+        fixed = f"{visual_bible} Title: {title}. Scene: {scene_prompt}. Narration: "
+        if len(fixed) > MAX_PROMPT_CHARS:
+            raise PermanentProviderError("image prompt fixed content exceeds the size limit")
         return fixed + narration[: MAX_PROMPT_CHARS - len(fixed)]
 
 
@@ -170,3 +180,7 @@ class CloudflareRESTImageClient:
         ):
             raise PermanentProviderError("Cloudflare image response is invalid")
         return envelope
+
+
+def _normalize_whitespace(value: str) -> str:
+    return re.sub(r"\s+", " ", value).strip()
