@@ -1,0 +1,163 @@
+from __future__ import annotations
+
+import json
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlparse
+
+
+class ProjectActionGate:
+    def __init__(self) -> None:
+        self._guard = threading.Lock()
+        self._in_flight: set[str] = set()
+
+    def acquire(self, project_id: str) -> bool:
+        with self._guard:
+            if project_id in self._in_flight:
+                return False
+            self._in_flight.add(project_id)
+            return True
+
+    def release(self, project_id: str) -> None:
+        with self._guard:
+            self._in_flight.discard(project_id)
+
+
+class DashboardApiServer(ThreadingHTTPServer):
+    daemon_threads = True
+
+    def __init__(self, server_address, handler_class, summary_service, action_adapter, gate):
+        super().__init__(server_address, handler_class)
+        self.summary_service = summary_service
+        self.action_adapter = action_adapter
+        self.gate = gate
+
+
+class DashboardRequestHandler(BaseHTTPRequestHandler):
+    server: DashboardApiServer
+
+    def do_GET(self) -> None:
+        parts = _path_parts(self.path)
+        try:
+            if parts == ["api", "projects"]:
+                self._write_json(200, {"projects": self.server.summary_service.list_projects()})
+                return
+            if len(parts) == 3 and parts[:2] == ["api", "projects"]:
+                self._write_json(200, self.server.summary_service.get_project(parts[2]))
+                return
+            self._write_json(404, {"ok": False, "error": "Not found."})
+        except KeyError:
+            self._write_json(404, {"ok": False, "error": "Project not found."})
+        except FileNotFoundError:
+            self._write_json(404, {"ok": False, "error": "Project not found."})
+        except ValueError as error:
+            self._write_json(400, {"ok": False, "error": str(error)})
+
+    def do_POST(self) -> None:
+        parts = _path_parts(self.path)
+        if len(parts) != 4 or parts[:2] != ["api", "projects"]:
+            self._write_json(404, {"ok": False, "error": "Not found."})
+            return
+
+        project_id = parts[2]
+        action = parts[3]
+        if not self.server.gate.acquire(project_id):
+            self._write_json(409, {"ok": False, "error": f"Action already running for {project_id}."})
+            return
+
+        try:
+            if action == "run":
+                payload = self.server.action_adapter.run_project(project_id)
+            elif action == "resume":
+                payload = self.server.action_adapter.resume_project(project_id)
+            elif action in {"approve-script", "approve-final"}:
+                body = self._read_json_body()
+                approved = body.get("approved")
+                if not isinstance(approved, bool):
+                    raise ValueError("approved must be a boolean")
+                reviewer = body.get("reviewer", "human")
+                if not isinstance(reviewer, str):
+                    raise ValueError("reviewer must be a string")
+                if len(reviewer.strip() or "human") > 64:
+                    raise ValueError("reviewer must be at most 64 characters")
+                stage = "script" if action == "approve-script" else "final"
+                payload = self.server.action_adapter.approve(stage, project_id, approved, reviewer)
+            else:
+                self._write_json(404, {"ok": False, "error": "Not found."})
+                return
+            self._write_json(200, payload)
+        except KeyError:
+            self._write_json(404, {"ok": False, "error": "Project not found."})
+        except FileNotFoundError:
+            self._write_json(404, {"ok": False, "error": "Project not found."})
+        except ValueError as error:
+            self._write_json(400, {"ok": False, "error": str(error)})
+        finally:
+            self.server.gate.release(project_id)
+
+    def log_message(self, format: str, *args) -> None:  # noqa: A003
+        return
+
+    def _read_json_body(self) -> dict[str, object]:
+        length = int(self.headers.get("Content-Length", "0"))
+        raw = self.rfile.read(length) if length > 0 else b"{}"
+        try:
+            payload = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise ValueError("invalid JSON body") from error
+        if not isinstance(payload, dict):
+            raise ValueError("JSON body must be an object")
+        return payload
+
+    def _write_json(self, status_code: int, payload: dict[str, object]) -> None:
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        self.send_response(status_code)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+
+def create_dashboard_api_server(
+    summary_service,
+    action_adapter,
+    *,
+    host: str = "127.0.0.1",
+    port: int = 8000,
+    gate: ProjectActionGate | None = None,
+):
+    return DashboardApiServer(
+        (host, port),
+        DashboardRequestHandler,
+        summary_service,
+        action_adapter,
+        gate or ProjectActionGate(),
+    )
+
+
+def serve_dashboard_api(
+    summary_service,
+    action_adapter,
+    *,
+    host: str = "127.0.0.1",
+    port: int = 8000,
+    gate: ProjectActionGate | None = None,
+) -> int:
+    server = create_dashboard_api_server(
+        summary_service,
+        action_adapter,
+        host=host,
+        port=port,
+        gate=gate,
+    )
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        return 0
+    finally:
+        server.server_close()
+    return 0
+
+
+def _path_parts(path: str) -> list[str]:
+    return [part for part in urlparse(path).path.split("/") if part]

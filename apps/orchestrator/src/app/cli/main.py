@@ -8,9 +8,11 @@ import time
 from collections.abc import Mapping
 from functools import partial
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Callable, Sequence
 
 from app.providers.base import PermanentProviderError, ProviderError, RetryableProviderError
+from app.http.dashboard_api import serve_dashboard_api
 from app.providers.cloudflare_image import (
     DEFAULT_MODEL as DEFAULT_CLOUDFLARE_IMAGE_MODEL,
     CloudflareImageClient,
@@ -27,6 +29,7 @@ from app.services.approval_reporting import (
     ApprovalRequest,
     ReportRequest,
 )
+from app.services.dashboard_control import DashboardActionAdapter, DashboardControlService
 from app.services.artifacts import ArtifactStore
 from app.services.config import (
     build_image_provider,
@@ -59,6 +62,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _record_script_approval(args)
     if args.command == "approve-final":
         return _record_final_approval(args)
+    if args.command == "dashboard-api":
+        return _run_dashboard_api(args)
     if args.command == "report":
         return _write_project_report(args)
     if args.command == "smoke-google-tts":
@@ -106,6 +111,12 @@ def _build_parser() -> argparse.ArgumentParser:
 
     approve_final = subparsers.add_parser("approve-final", help="Record final publishing approval")
     _add_approval_arguments(approve_final)
+
+    dashboard_api = subparsers.add_parser("dashboard-api", help="Run the local dashboard control API")
+    dashboard_api.add_argument("--host", default="127.0.0.1")
+    dashboard_api.add_argument("--port", type=int, default=8000)
+    dashboard_api.add_argument("--projects-dir", default="./projects")
+    dashboard_api.add_argument("--checkpoint-db", default=_default_checkpoint_db())
 
     report = subparsers.add_parser("report", help="Write contact sheet and project reports")
     report.add_argument("--project-id", required=True)
@@ -203,6 +214,40 @@ def _write_project_report(args: argparse.Namespace) -> int:
         )
     )
     print(json.dumps(paths.to_dict(), ensure_ascii=False))
+    return 0
+
+
+def _run_dashboard_api(args: argparse.Namespace) -> int:
+    from app.http.dashboard_api import serve_dashboard_api
+    from app.services.dashboard_control import DashboardActionAdapter, DashboardControlService
+
+    projects = ProjectRepository(Path(args.projects_dir))
+    checkpoints = CheckpointRepository(Path(args.checkpoint_db))
+    summary_service = DashboardControlService(projects, checkpoints)
+
+    def runner_factory(project_id: str, *, configure_content: bool) -> PipelineRunner:
+        runner_args = SimpleNamespace(
+            projects_dir=args.projects_dir,
+            checkpoint_db=args.checkpoint_db,
+            project_id=project_id,
+            max_image_attempts=3,
+            tts_words_per_second=2.5,
+        )
+        return _build_pipeline_runner(runner_args, configure_content=configure_content)
+
+    action_adapter = DashboardActionAdapter(
+        projects,
+        checkpoints,
+        runner_factory=runner_factory,
+        approval_service_factory=lambda: ApprovalReportingService(projects, checkpoints),
+        summary_service=summary_service,
+    )
+    serve_dashboard_api(
+        summary_service,
+        action_adapter,
+        host=args.host,
+        port=args.port,
+    )
     return 0
 
 
@@ -422,14 +467,15 @@ def _repository_root() -> Path:
 
 
 def _build_pipeline_runner(
-    args: argparse.Namespace, *, configure_content: bool = False
+    args: argparse.Namespace, *, configure_content: bool = False, project_id: str | None = None
 ) -> PipelineRunner:
     repository = ProjectRepository(Path(args.projects_dir))
     checkpoints = CheckpointRepository(Path(args.checkpoint_db))
     repository_root = _repository_root()
-    project_dir = repository.project_dir(args.project_id)
-    renderer = RemotionRenderer(repository_root, project_dir, args.project_id)
-    checkpoint = checkpoints.load_latest(args.project_id)
+    resolved_project_id = project_id or args.project_id
+    project_dir = repository.project_dir(resolved_project_id)
+    renderer = RemotionRenderer(repository_root, project_dir, resolved_project_id)
+    checkpoint = checkpoints.load_latest(resolved_project_id)
     needs_external_media = (
         checkpoint is not None and checkpoint.state.get("script_approved") is True
     )

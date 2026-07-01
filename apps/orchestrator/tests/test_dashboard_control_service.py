@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import MagicMock
 
 from app.repositories.checkpoint_repository import CheckpointRepository
 from app.repositories.project_repository import ProjectRepository
@@ -193,6 +194,117 @@ class DashboardControlServiceTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "project"):
             self._service().get_project("../outside")
+
+    def test_run_project_uses_runner_factory_and_returns_compact_summary(self):
+        from app.services.dashboard_control import DashboardActionAdapter
+
+        self._create_project()
+        runner = MagicMock()
+        runner.run.return_value = {
+            "status": "awaiting_script_approval",
+            "current_node": "script_approval",
+        }
+        runner_factory = MagicMock(return_value=runner)
+
+        result = DashboardActionAdapter(
+            self.projects,
+            self.checkpoints,
+            runner_factory=runner_factory,
+        ).run_project("project_001")
+
+        runner_factory.assert_called_once_with("project_001", configure_content=True)
+        runner.run.assert_called_once_with("project_001")
+        self.assertEqual(
+            result,
+            {
+                "ok": True,
+                "projectId": "project_001",
+                "action": "run",
+                "status": "awaiting_script_approval",
+                "currentNode": "script_approval",
+                "message": "Project started successfully.",
+            },
+        )
+
+    def test_resume_project_uses_runner_factory_without_content(self):
+        from app.services.dashboard_control import DashboardActionAdapter
+
+        self._create_project()
+        runner = MagicMock()
+        runner.resume.return_value = {
+            "status": "awaiting_final_approval",
+            "current_node": "final_approval",
+        }
+        runner_factory = MagicMock(return_value=runner)
+
+        result = DashboardActionAdapter(
+            self.projects,
+            self.checkpoints,
+            runner_factory=runner_factory,
+        ).resume_project("project_001")
+
+        runner_factory.assert_called_once_with("project_001", configure_content=False)
+        runner.resume.assert_called_once_with("project_001")
+        self.assertEqual(result["action"], "resume")
+        self.assertEqual(result["status"], "awaiting_final_approval")
+        self.assertEqual(result["currentNode"], "final_approval")
+
+    def test_approve_defaults_reviewer_to_human_and_trims_input(self):
+        from app.services.dashboard_control import DashboardActionAdapter
+
+        metadata = self._create_project().with_status(
+            "awaiting_script_approval",
+            current_node="script_approval",
+        )
+        self.projects.save_project(metadata)
+        self._save_checkpoint(
+            "project_001",
+            status="awaiting_script_approval",
+            current_node="script_approval",
+            waiting_for="script",
+        )
+
+        result = DashboardActionAdapter(self.projects, self.checkpoints).approve(
+            "script",
+            "project_001",
+            approved=True,
+            reviewer="  ",
+        )
+
+        approvals = (
+            self.projects.project_dir("project_001") / "reports" / "approvals.json"
+        ).read_text(encoding="utf-8")
+        self.assertEqual(result["action"], "approve_script")
+        self.assertEqual(result["status"], "script_approved")
+        self.assertEqual(result["currentNode"], "script_approval")
+        self.assertEqual(result["message"], "Script approval recorded.")
+        self.assertIn('"reviewer": "human"', approvals)
+
+    def test_approve_rejects_invalid_stage(self):
+        from app.services.dashboard_control import DashboardActionAdapter
+
+        self._create_project()
+
+        with self.assertRaisesRegex(ValueError, "stage"):
+            DashboardActionAdapter(self.projects, self.checkpoints).approve(
+                "draft",
+                "project_001",
+                approved=True,
+                reviewer="human",
+            )
+
+    def test_approve_rejects_reviewer_over_64_characters(self):
+        from app.services.dashboard_control import DashboardActionAdapter
+
+        self._create_project()
+
+        with self.assertRaisesRegex(ValueError, "reviewer"):
+            DashboardActionAdapter(self.projects, self.checkpoints).approve(
+                "script",
+                "project_001",
+                approved=True,
+                reviewer="x" * 65,
+            )
 
 
 if __name__ == "__main__":

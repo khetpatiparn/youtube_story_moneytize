@@ -150,6 +150,19 @@ class DashboardControlApiTests(unittest.TestCase):
             self.action_adapter.calls,
         )
 
+    def test_approve_script_endpoint_defaults_missing_reviewer_to_human(self):
+        response = self.request(
+            "POST",
+            "/api/projects/project_001/approve-script",
+            {"approved": True},
+        )
+
+        self.assertEqual(response.status, 200)
+        self.assertIn(
+            ("approve", "script", "project_001", True, "human"),
+            self.action_adapter.calls,
+        )
+
     def test_approve_final_endpoint_validates_and_invokes_action_adapter(self):
         response = self.request(
             "POST",
@@ -193,6 +206,10 @@ class DashboardControlApiTests(unittest.TestCase):
         response = self.request("POST", "/api/projects/project_001/resume")
 
         self.assertEqual(response.status, 409)
+        self.assertEqual(
+            response.json,
+            {"ok": False, "error": "Action already running for project_001."},
+        )
         self.gate.release("project_001")
 
     def test_approval_body_requires_boolean_approved(self):
