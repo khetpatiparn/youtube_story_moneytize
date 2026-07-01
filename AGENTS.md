@@ -32,6 +32,7 @@ Use `$env:PYTHONPATH='apps/orchestrator/src'` unless installed editable.
 - `python -m app dashboard-api --host 127.0.0.1 --port 8000` starts the local dashboard control API.
 - `npm.cmd run dev:dashboard` starts the local Media QA dashboard with `/api` proxied to the local control API.
 - `npm.cmd run build:dashboard` builds the dashboard static bundle.
+- `Start YouTube Studio.bat` launches the local dashboard API plus browser UI for normal web-based use.
 
 ## Coding Style & Naming Conventions
 Use Python for orchestration and TypeScript/React for Remotion. Keep one node responsibility per file. Prefer explicit schemas and contracts. Use snake_case in Python and PascalCase for React.
@@ -63,6 +64,6 @@ Gemini story generation uses one structured response per script version, retries
 
 Cloudflare image runs publish one validated JPEG per scene, accept dimensions from 512 through 4096 pixels per side, and retry only transient failures with a finite bound. They have no automatic paid or local fallback. Cloudflare smoke outputs must remain relative `.jpg` paths under repository `tmp/`. Never log account IDs, API tokens, prompts, response bodies, or provider error bodies.
 
-The dashboard control slice may run `run`, `resume`, `approve-script`, and `approve-final` for existing local projects only. Do not add project creation, provider/config editing, uploads, or remote/published control paths without a new goal and tests.
+The dashboard control slice may run `run`, `resume`, `approve-script`, and `approve-final` for existing local projects, and it now also supports local project creation plus encrypted provider/config editing through the browser. Do not add uploads or remote/published control paths without a new goal and tests.
 
 Local content, SVG image, and tone-WAV providers are deterministic POC adapters. Gemini TTS is Preview and Cloudflare Flux continuity is prompt-only; neither proves production capacity. YouTube upload remains out of scope.

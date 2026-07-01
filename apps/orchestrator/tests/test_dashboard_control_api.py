@@ -36,6 +36,39 @@ class _FakeSummaryService:
         except KeyError as error:
             raise KeyError(project_id) from error
 
+    def create_project(self, payload):
+        if "admin" in payload:
+            raise ValueError("unknown fields: admin")
+        created = {
+            "projectId": payload.get("projectId", "project_002"),
+            "topic": payload["topic"],
+            "status": "created",
+            "currentNode": None,
+            "waitingFor": None,
+            "targetDurationSeconds": payload["duration"],
+            "targetLanguage": payload.get("targetLanguage", "th"),
+            "source": "live",
+            "availableActions": ["run"],
+        }
+        self.projects[created["projectId"]] = created
+        return created
+
+    def copy_project(self, project_id: str):
+        copied = dict(self.get_project(project_id))
+        copied["projectId"] = f"{project_id}_copy"
+        copied["status"] = "created"
+        copied["currentNode"] = None
+        copied["waitingFor"] = None
+        copied["availableActions"] = ["run"]
+        self.projects[copied["projectId"]] = copied
+        return copied
+
+    def delete_project(self, project_id: str, confirm_project_id: str):
+        if confirm_project_id != project_id:
+            raise ValueError("confirmProjectId must exactly match the project id")
+        self.projects.pop(project_id, None)
+        return {"ok": True, "projectId": project_id}
+
 
 class _FakeActionAdapter:
     def __init__(self):
@@ -75,18 +108,57 @@ class _FakeActionAdapter:
         }
 
 
+class _FakeSettingsService:
+    def __init__(self):
+        self.values = {
+            "story_provider": "local",
+            "image_provider": "local",
+            "projects_dir": "./projects",
+            "image_retry_limit": 3,
+            "gemini_api_key": {"configured": False, "suffix": None},
+            "cloudflare_account_id": {"configured": False, "suffix": None},
+            "cloudflare_api_token": {"configured": False, "suffix": None},
+        }
+        self.updates = []
+
+    def public_settings(self):
+        return dict(self.values)
+
+    def update(self, changes):
+        self.updates.append(dict(changes))
+        if "gemini_api_key" in changes and changes["gemini_api_key"]:
+            self.values["gemini_api_key"] = {"configured": True, "suffix": "cret"}
+        for key in ("story_provider", "image_provider", "projects_dir", "image_retry_limit"):
+            if key in changes:
+                self.values[key] = changes[key]
+        return self.public_settings()
+
+
+class _FakeSettingsTester:
+    def __init__(self):
+        self.calls = []
+
+    def test(self, provider):
+        self.calls.append(provider)
+        return {"ok": True, "provider": provider}
+
+
 class DashboardControlApiTests(unittest.TestCase):
     def setUp(self):
         from app.http.dashboard_api import ProjectActionGate, create_dashboard_api_server
 
         self.summary_service = _FakeSummaryService()
         self.action_adapter = _FakeActionAdapter()
+        self.settings_service = _FakeSettingsService()
+        self.settings_tester = _FakeSettingsTester()
         self.gate = ProjectActionGate()
         self.server = create_dashboard_api_server(
             self.summary_service,
             self.action_adapter,
             port=0,
             gate=self.gate,
+            settings_service=self.settings_service,
+            settings_tester=self.settings_tester,
         )
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
@@ -121,6 +193,70 @@ class DashboardControlApiTests(unittest.TestCase):
 
         self.assertEqual(response.status, 200)
         self.assertEqual(response.json["projectId"], "project_001")
+
+    def test_health_endpoint_reports_ready(self):
+        response = self.request("GET", "/api/health")
+
+        self.assertEqual(response.status, 200)
+        self.assertEqual(response.json, {"ok": True})
+
+    def test_get_settings_returns_public_settings_shape(self):
+        response = self.request("GET", "/api/settings")
+
+        self.assertEqual(response.status, 200)
+        self.assertEqual(response.json["story_provider"], "local")
+        self.assertEqual(response.json["gemini_api_key"], {"configured": False, "suffix": None})
+
+    def test_put_settings_never_echoes_secret(self):
+        response = self.request("PUT", "/api/settings", {"gemini_api_key": "AQ.secret"})
+
+        self.assertEqual(response.status, 200)
+        self.assertNotIn("AQ.secret", response.body.decode("utf-8"))
+        self.assertEqual(response.json["gemini_api_key"], {"configured": True, "suffix": "cret"})
+
+    def test_provider_test_is_never_triggered_by_get_or_put(self):
+        self.request("GET", "/api/settings")
+        self.request("PUT", "/api/settings", {"story_provider": "local"})
+
+        self.assertEqual(self.settings_tester.calls, [])
+
+    def test_post_settings_test_runs_only_explicit_provider_probe(self):
+        response = self.request("POST", "/api/settings/test", {"provider": "gemini"})
+
+        self.assertEqual(response.status, 200)
+        self.assertEqual(response.json, {"ok": True, "provider": "gemini"})
+        self.assertEqual(self.settings_tester.calls, ["gemini"])
+
+    def test_create_project_endpoint_returns_created_summary(self):
+        response = self.request(
+            "POST",
+            "/api/projects",
+            {"topic": "River spirit", "duration": 60, "profile": "simple_story_th", "targetLanguage": "th"},
+        )
+
+        self.assertEqual(response.status, 201)
+        self.assertEqual(response.json["status"], "created")
+        self.assertEqual(response.json["availableActions"], ["run"])
+
+    def test_create_project_rejects_unknown_field(self):
+        response = self.request(
+            "POST",
+            "/api/projects",
+            {"topic": "x", "duration": 60, "profile": "simple_story_th", "admin": True},
+        )
+
+        self.assertEqual(response.status, 400)
+
+    def test_copy_then_delete_requires_exact_confirmation(self):
+        copied = self.request("POST", "/api/projects/project_001/copy", {})
+        denied = self.request(
+            "DELETE",
+            f"/api/projects/{copied.json['projectId']}",
+            {"confirmProjectId": "wrong"},
+        )
+
+        self.assertEqual(copied.status, 201)
+        self.assertEqual(denied.status, 400)
 
     def test_run_endpoint_invokes_action_adapter(self):
         response = self.request("POST", "/api/projects/project_001/run")
@@ -184,6 +320,16 @@ class DashboardControlApiTests(unittest.TestCase):
             "{invalid",
             {"Content-Type": "application/json"},
         )
+
+        self.assertEqual(response.status, 400)
+
+    def test_put_settings_requires_application_json(self):
+        response = self.request("PUT", "/api/settings", "{}", {"Content-Type": "text/plain"})
+
+        self.assertEqual(response.status, 400)
+
+    def test_delete_project_requires_application_json(self):
+        response = self.request("DELETE", "/api/projects/project_001", "{}", {"Content-Type": "text/plain"})
 
         self.assertEqual(response.status, 400)
 

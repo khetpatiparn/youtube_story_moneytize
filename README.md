@@ -121,4 +121,16 @@ npm.cmd run dev:dashboard
 
 `dev:dashboard` proxies `/api` to `http://127.0.0.1:8000`. When the API is available, the dashboard reads live project state and can trigger `run`, `resume`, `approve-script`, and `approve-final` for existing projects. When the API is unavailable, the UI falls back to `dashboard-data.json` or bundled demo data.
 
-The browser control layer is local-only. It does not create projects, edit provider configuration, upload files, or publish to YouTube.
+The browser control layer is local-only and now supports local project creation plus encrypted provider settings. It does not publish to YouTube.
+
+## One-Click Browser Launch
+
+Double-click `Start YouTube Studio.bat` from the repository root to start the local control API and dashboard, wait for `http://127.0.0.1:8000/api/health` plus `http://127.0.0.1:5173/`, then open the browser automatically.
+
+The launcher expects:
+
+- `.venv\Scripts\python.exe`
+- installed `node_modules`
+- local loopback access on ports `8000` and `5173`
+
+Launcher logs are written under `tmp/launcher/`.

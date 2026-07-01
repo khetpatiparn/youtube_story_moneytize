@@ -49,3 +49,4 @@ tmp/
 temp/
 .DS_Store
 Thumbs.db
+dist/dashboard/

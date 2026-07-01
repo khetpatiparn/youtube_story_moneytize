@@ -10,6 +10,22 @@ from unittest.mock import MagicMock, patch
 
 
 class CliTests(unittest.TestCase):
+    def test_dashboard_provider_tester_requires_configured_secrets(self):
+        from app.cli.main import DashboardProviderTester
+
+        settings_service = MagicMock()
+        settings_service.public_settings.return_value = {
+            "gemini_api_key": {"configured": True, "suffix": "cret"},
+            "cloudflare_account_id": {"configured": True, "suffix": "1234"},
+            "cloudflare_api_token": {"configured": False, "suffix": None},
+        }
+
+        tester = DashboardProviderTester(settings_service)
+
+        self.assertEqual(tester.test("gemini"), {"ok": True, "provider": "gemini"})
+        with self.assertRaisesRegex(ValueError, "cloudflare_api_token"):
+            tester.test("cloudflare")
+
     def test_pipeline_runner_injects_story_provider_only_for_fresh_run(self):
         from app.cli.main import _build_pipeline_runner
 
