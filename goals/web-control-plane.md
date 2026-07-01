@@ -19,6 +19,7 @@ Deliver a browser-first local control plane for project setup and creation:
 - Python web-control-plane related suite: 55 tests passed
 - Dashboard node suite: 27 tests passed
 - Dashboard production build: passed
+- Runtime launcher smoke: browser app on `127.0.0.1:5173` answered `200`; local machine already had a non-matching service bound on `127.0.0.1:8000` returning `404`, so the launcher entered its port-conflict handling path rather than proving a clean-room startup
 
 ## Delivered
 - encrypted local dashboard settings with masked public responses
@@ -30,7 +31,7 @@ Deliver a browser-first local control plane for project setup and creation:
 
 ## Known Limitations
 - Full repository `python -m unittest discover apps/orchestrator/tests` is still blocked by pre-existing environment issues outside this slice: missing `PIL` for image tests and sandboxed Remotion network restrictions in `test_end_to_end.py`
-- The one-click launcher contract is covered by test, but manual double-click verification was not executed in this sandboxed run
+- Runtime launcher verification in this run was affected by pre-existing local port conflicts on `8000` and `5173`; the launcher was hardened to reuse healthy services or fail fast on conflicting ones
 
 ## Next Plan
 - `docs/superpowers/plans/2026-07-01-web-control-plane-slice-2.md`
