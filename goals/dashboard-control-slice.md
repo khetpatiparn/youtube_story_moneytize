@@ -1,6 +1,6 @@
 # Dashboard Control Slice
 
-## Goal
+## Objective
 Add local-only dashboard controls for existing projects: live status, run, resume,
 script approval, and final approval.
 
@@ -9,7 +9,7 @@ script approval, and final approval.
 - provider/config editing
 - uploads or YouTube publishing
 
-## Verification
-- python dashboard control tests
-- npm dashboard tests
-- manual local API + Vite smoke
+## Verification Checklist
+- [ ] python dashboard control tests
+- [ ] npm dashboard tests
+- [ ] manual local API + Vite smoke

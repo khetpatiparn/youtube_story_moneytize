@@ -55,15 +55,15 @@ class DashboardControlServiceTests(unittest.TestCase):
         self.assertEqual(project["availableActions"], ["run"])
 
     def test_missing_checkpoint_keeps_metadata_without_live_node_state(self):
-        metadata = self._create_project().with_status("script_changes_requested")
-        self.projects.save_project(metadata)
+        self._create_project()
 
         project = self._service().get_project("project_001")
 
-        self.assertEqual(project["status"], "script_changes_requested")
+        self.assertEqual(project["projectId"], "project_001")
+        self.assertEqual(project["status"], "created")
         self.assertIsNone(project["currentNode"])
         self.assertIsNone(project["waitingFor"])
-        self.assertEqual(project["availableActions"], [])
+        self.assertEqual(project["availableActions"], ["run"])
 
     def test_script_approval_pause_exposes_resume_and_script_approval(self):
         metadata = self._create_project().with_status(
@@ -162,7 +162,31 @@ class DashboardControlServiceTests(unittest.TestCase):
 
         self.assertEqual(len(projects), 1)
         self.assertEqual(projects[0]["projectId"], "project_001")
+        self.assertEqual(projects[0]["status"], "awaiting_script_approval")
+        self.assertEqual(projects[0]["currentNode"], "script_approval")
+        self.assertEqual(projects[0]["waitingFor"], "script")
         self.assertEqual(projects[0]["availableActions"], ["resume", "approve_script"])
+
+    def test_get_project_returns_explicit_live_summary_shape(self):
+        metadata = self._create_project().with_status(
+            "awaiting_script_approval",
+            current_node="script_approval",
+        )
+        self.projects.save_project(metadata)
+        self._save_checkpoint(
+            "project_001",
+            status="awaiting_script_approval",
+            current_node="script_approval",
+            waiting_for="script",
+        )
+
+        project = self._service().get_project("project_001")
+
+        self.assertEqual(project["projectId"], "project_001")
+        self.assertEqual(project["status"], "awaiting_script_approval")
+        self.assertEqual(project["currentNode"], "script_approval")
+        self.assertEqual(project["waitingFor"], "script")
+        self.assertEqual(project["availableActions"], ["resume", "approve_script"])
 
     def test_rejects_project_ids_outside_projects_directory(self):
         self._create_project()
