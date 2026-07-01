@@ -30,6 +30,7 @@ from app.services.approval_reporting import (
     ReportRequest,
 )
 from app.services.dashboard_control import DashboardActionAdapter, DashboardControlService
+from app.services.dashboard_settings import DashboardSettingsService
 from app.services.artifacts import ArtifactStore
 from app.services.config import (
     build_image_provider,
@@ -41,6 +42,7 @@ from app.services.image_validation import validate_image_file
 from app.services.pipeline_runner import PipelineRunner
 from app.services.quality import ffprobe_duration
 from app.services.rendering import RemotionRenderer
+from app.services.secret_store import WindowsDpapiProtector
 from app.services.content_pipeline import validate_story_content
 from app.services.timeline import wav_metadata
 
@@ -224,6 +226,11 @@ def _run_dashboard_api(args: argparse.Namespace) -> int:
     projects = ProjectRepository(Path(args.projects_dir))
     checkpoints = CheckpointRepository(Path(args.checkpoint_db))
     summary_service = DashboardControlService(projects, checkpoints)
+    settings_service = DashboardSettingsService(
+        _repository_root() / "data" / "dashboard-settings.json",
+        WindowsDpapiProtector(),
+    )
+    settings_tester = DashboardProviderTester(settings_service)
 
     def runner_factory(project_id: str, *, configure_content: bool) -> PipelineRunner:
         runner_args = SimpleNamespace(
@@ -247,8 +254,32 @@ def _run_dashboard_api(args: argparse.Namespace) -> int:
         action_adapter,
         host=args.host,
         port=args.port,
+        settings_service=settings_service,
+        settings_tester=settings_tester,
     )
     return 0
+
+
+class DashboardProviderTester:
+    def __init__(self, settings_service: DashboardSettingsService) -> None:
+        self.settings_service = settings_service
+
+    def test(self, provider: str) -> dict[str, object]:
+        settings = self.settings_service.public_settings()
+        if provider == "gemini":
+            if not settings["gemini_api_key"]["configured"]:
+                raise ValueError("gemini_api_key is not configured")
+            return {"ok": True, "provider": "gemini"}
+        if provider == "cloudflare":
+            missing = [
+                field
+                for field in ("cloudflare_account_id", "cloudflare_api_token")
+                if not settings[field]["configured"]
+            ]
+            if missing:
+                raise ValueError(f"missing Cloudflare settings: {', '.join(missing)}")
+            return {"ok": True, "provider": "cloudflare"}
+        raise ValueError("provider must be one of: cloudflare, gemini")
 
 
 def _smoke_google_tts(

@@ -26,11 +26,22 @@ class ProjectActionGate:
 class DashboardApiServer(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, server_address, handler_class, summary_service, action_adapter, gate):
+    def __init__(
+        self,
+        server_address,
+        handler_class,
+        summary_service,
+        action_adapter,
+        gate,
+        settings_service=None,
+        settings_tester=None,
+    ):
         super().__init__(server_address, handler_class)
         self.summary_service = summary_service
         self.action_adapter = action_adapter
         self.gate = gate
+        self.settings_service = settings_service
+        self.settings_tester = settings_tester
 
 
 class DashboardRequestHandler(BaseHTTPRequestHandler):
@@ -39,6 +50,12 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         parts = _path_parts(self.path)
         try:
+            if parts == ["api", "health"]:
+                self._write_json(200, {"ok": True})
+                return
+            if parts == ["api", "settings"]:
+                self._write_json(200, self._require_settings_service().public_settings())
+                return
             if parts == ["api", "projects"]:
                 self._write_json(200, {"projects": self.server.summary_service.list_projects()})
                 return
@@ -53,8 +70,29 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         except ValueError as error:
             self._write_json(400, {"ok": False, "error": str(error)})
 
+    def do_PUT(self) -> None:
+        parts = _path_parts(self.path)
+        try:
+            if parts != ["api", "settings"]:
+                self._write_json(404, {"ok": False, "error": "Not found."})
+                return
+            body = self._read_json_body(require_json=True)
+            self._write_json(200, self._require_settings_service().update(body))
+        except ValueError as error:
+            self._write_json(400, {"ok": False, "error": str(error)})
+
     def do_POST(self) -> None:
         parts = _path_parts(self.path)
+        if parts == ["api", "settings", "test"]:
+            try:
+                body = self._read_json_body(require_json=True)
+                provider = body.get("provider")
+                if provider not in {"gemini", "cloudflare"}:
+                    raise ValueError("provider must be one of: cloudflare, gemini")
+                self._write_json(200, self._require_settings_tester().test(provider))
+            except ValueError as error:
+                self._write_json(400, {"ok": False, "error": str(error)})
+            return
         if len(parts) != 4 or parts[:2] != ["api", "projects"]:
             self._write_json(404, {"ok": False, "error": "Not found."})
             return
@@ -98,8 +136,12 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
     def log_message(self, format: str, *args) -> None:  # noqa: A003
         return
 
-    def _read_json_body(self) -> dict[str, object]:
+    def _read_json_body(self, *, require_json: bool = False) -> dict[str, object]:
+        if require_json and not self._is_json_request():
+            raise ValueError("Content-Type must be application/json")
         length = int(self.headers.get("Content-Length", "0"))
+        if length > 65536:
+            raise ValueError("JSON body must be 65536 bytes or smaller")
         raw = self.rfile.read(length) if length > 0 else b"{}"
         try:
             payload = json.loads(raw.decode("utf-8"))
@@ -108,6 +150,20 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         if not isinstance(payload, dict):
             raise ValueError("JSON body must be an object")
         return payload
+
+    def _is_json_request(self) -> bool:
+        content_type = self.headers.get("Content-Type", "")
+        return content_type.split(";", 1)[0].strip().lower() == "application/json"
+
+    def _require_settings_service(self):
+        if self.server.settings_service is None:
+            raise ValueError("settings service is not configured")
+        return self.server.settings_service
+
+    def _require_settings_tester(self):
+        if self.server.settings_tester is None:
+            raise ValueError("settings tester is not configured")
+        return self.server.settings_tester
 
     def _write_json(self, status_code: int, payload: dict[str, object]) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -125,6 +181,8 @@ def create_dashboard_api_server(
     host: str = "127.0.0.1",
     port: int = 8000,
     gate: ProjectActionGate | None = None,
+    settings_service=None,
+    settings_tester=None,
 ):
     return DashboardApiServer(
         (host, port),
@@ -132,6 +190,8 @@ def create_dashboard_api_server(
         summary_service,
         action_adapter,
         gate or ProjectActionGate(),
+        settings_service=settings_service,
+        settings_tester=settings_tester,
     )
 
 
@@ -142,6 +202,8 @@ def serve_dashboard_api(
     host: str = "127.0.0.1",
     port: int = 8000,
     gate: ProjectActionGate | None = None,
+    settings_service=None,
+    settings_tester=None,
 ) -> int:
     server = create_dashboard_api_server(
         summary_service,
@@ -149,6 +211,8 @@ def serve_dashboard_api(
         host=host,
         port=port,
         gate=gate,
+        settings_service=settings_service,
+        settings_tester=settings_tester,
     )
     try:
         server.serve_forever()
