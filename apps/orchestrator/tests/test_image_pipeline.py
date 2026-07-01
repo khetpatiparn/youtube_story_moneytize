@@ -1,9 +1,13 @@
+import io
 import json
 import tempfile
 import unittest
 from collections import Counter
+from pathlib import Path
 from unittest.mock import patch
 from xml.etree import ElementTree
+
+from PIL import Image
 
 
 def scenes():
@@ -21,6 +25,192 @@ def scenes():
 
 
 class ImagePipelineTests(unittest.TestCase):
+    def test_oversized_jpeg_dimensions_are_rejected_before_pixels_load(self):
+        from app.services.image_validation import validate_image_bytes
+
+        buffer = io.BytesIO()
+        Image.new("RGB", (4097, 512), "black").save(buffer, format="JPEG")
+
+        with patch.object(Image.Image, "load", side_effect=AssertionError("pixels loaded")) as load:
+            with self.assertRaisesRegex(ValueError, "dimensions"):
+                validate_image_bytes(buffer.getvalue(), "image/jpeg")
+
+        load.assert_not_called()
+
+    def test_image_file_reader_rejects_content_over_16_mb(self):
+        from app.services.image_validation import MAX_IMAGE_BYTES, validate_image_file
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "too-large.jpg"
+            path.write_bytes(b"x" * (MAX_IMAGE_BYTES + 1))
+
+            with self.assertRaisesRegex(ValueError, "exceeds 16 MB"):
+                validate_image_file(path, "image/jpeg")
+
+    def test_unsupported_provider_extension_is_permanent_before_generate(self):
+        from app.providers.base import PermanentProviderError
+        from app.services.artifacts import ArtifactStore
+        from app.services.image_pipeline import ImagePipeline
+
+        class UnsupportedProvider:
+            output_extension = "png"
+            calls = 0
+
+            def generate(self, scene, output_path):
+                self.calls += 1
+                raise AssertionError("provider called")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            provider = UnsupportedProvider()
+            with self.assertRaisesRegex(PermanentProviderError, "unsupported image output extension"):
+                ImagePipeline(ArtifactStore(temp_dir), provider)
+
+            self.assertEqual(provider.calls, 0)
+
+    def test_extension_and_mime_mismatch_exhausts_validation(self):
+        from app.services.artifacts import ArtifactStore
+        from app.services.image_pipeline import ImageGenerationExhausted, ImagePipeline
+
+        class MismatchedProvider:
+            output_extension = "jpg"
+
+            def __init__(self, store):
+                self.store = store
+
+            def generate(self, scene, output_path):
+                buffer = io.BytesIO()
+                Image.new("RGB", (1280, 720), "black").save(buffer, format="JPEG")
+                path = self.store.publish_bytes_set({output_path: buffer.getvalue()})[output_path]
+                return {"output_path": path, "mime_type": "image/svg+xml"}
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = ArtifactStore(temp_dir)
+            with self.assertRaises(ImageGenerationExhausted):
+                ImagePipeline(store, MismatchedProvider(store), max_attempts=1).generate(scenes()[:1])
+
+            self.assertIn("inconsistent", store.read_json("images/jobs.json")[0]["error"])
+
+    def test_resume_reuses_valid_persisted_jpeg(self):
+        from app.services.artifacts import ArtifactStore
+        from app.services.image_pipeline import ImagePipeline
+
+        class NeverCalled:
+            output_extension = "jpg"
+
+            def generate(self, scene, output_path):
+                raise AssertionError("provider called")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = ArtifactStore(temp_dir)
+            buffer = io.BytesIO()
+            Image.new("RGB", (1280, 720), "green").save(buffer, format="JPEG")
+            store.publish_bytes_set({"images/scene_001.jpg": buffer.getvalue()})
+            job = {"scene_id": "scene_001", "status": "completed", "attempts": 1,
+                   "retry_count": 0, "output_path": "images/scene_001.jpg", "mime_type": "image/jpeg"}
+
+            result = ImagePipeline(store, NeverCalled()).generate(scenes()[:1], existing_jobs=[job])
+
+            self.assertEqual(result["scenes"][0]["image_path"], "images/scene_001.jpg")
+            self.assertEqual(result["image_jobs"][0]["attempts"], 1)
+
+    def test_resume_repairs_corrupt_persisted_jpeg_within_attempt_budget(self):
+        from app.services.artifacts import ArtifactStore
+        from app.services.image_pipeline import ImagePipeline
+
+        class RepairProvider:
+            output_extension = "jpg"
+
+            def __init__(self, store):
+                self.store = store
+
+            def generate(self, scene, output_path):
+                buffer = io.BytesIO()
+                Image.new("RGB", (1280, 720), "blue").save(buffer, format="JPEG")
+                path = self.store.publish_bytes_set({output_path: buffer.getvalue()})[output_path]
+                return {"output_path": path, "mime_type": "image/jpeg"}
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = ArtifactStore(temp_dir)
+            store.publish_bytes_set({"images/scene_001.jpg": b"corrupt"})
+            job = {"scene_id": "scene_001", "status": "completed", "attempts": 1,
+                   "retry_count": 0, "output_path": "images/scene_001.jpg", "mime_type": "image/jpeg"}
+
+            result = ImagePipeline(store, RepairProvider(store)).generate(scenes()[:1], existing_jobs=[job])
+
+            self.assertEqual(result["image_jobs"][0]["attempts"], 2)
+            self.assertEqual(result["image_jobs"][0]["status"], "completed")
+
+    def test_jpeg_provider_uses_declared_extension_and_accepts_valid_image(self):
+        from app.services.artifacts import ArtifactStore
+        from app.services.image_pipeline import ImagePipeline
+
+        class JpegProvider:
+            output_extension = "jpg"
+
+            def __init__(self, store):
+                self.store = store
+
+            def generate(self, scene, output_path):
+                buffer = io.BytesIO()
+                Image.new("RGB", (1280, 720), "navy").save(buffer, format="JPEG")
+                relative_path = self.store.publish_bytes_set({output_path: buffer.getvalue()})[output_path]
+                return {"output_path": relative_path, "mime_type": "image/jpeg"}
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = ArtifactStore(temp_dir)
+            result = ImagePipeline(store, JpegProvider(store), max_attempts=1).generate(scenes()[:1])
+
+            image = result["generated_images"][0]
+            self.assertEqual(image["output_path"], "images/scene_001.jpg")
+            self.assertEqual(image["mime_type"], "image/jpeg")
+            self.assertTrue(store.path("images/scene_001.jpg").is_file())
+
+    def test_invalid_jpeg_exhausts_validation_at_one_attempt(self):
+        from app.services.artifacts import ArtifactStore
+        from app.services.image_pipeline import ImageGenerationExhausted, ImagePipeline
+
+        class InvalidJpegProvider:
+            output_extension = "jpg"
+
+            def __init__(self, store):
+                self.store = store
+
+            def generate(self, scene, output_path):
+                relative_path = self.store.publish_bytes_set({output_path: b"not a jpeg"})[output_path]
+                return {"output_path": relative_path, "mime_type": "image/jpeg"}
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = ArtifactStore(temp_dir)
+            with self.assertRaises(ImageGenerationExhausted):
+                ImagePipeline(store, InvalidJpegProvider(store), max_attempts=1).generate(scenes()[:1])
+
+            job = store.read_json("images/jobs.json")[0]
+            self.assertEqual((job["attempts"], job["status"]), (1, "failed"))
+
+    def test_small_jpeg_exhausts_validation_at_one_attempt(self):
+        from app.services.artifacts import ArtifactStore
+        from app.services.image_pipeline import ImageGenerationExhausted, ImagePipeline
+
+        class SmallJpegProvider:
+            output_extension = "jpg"
+
+            def __init__(self, store):
+                self.store = store
+
+            def generate(self, scene, output_path):
+                buffer = io.BytesIO()
+                Image.new("RGB", (64, 64), "red").save(buffer, format="JPEG")
+                relative_path = self.store.publish_bytes_set({output_path: buffer.getvalue()})[output_path]
+                return {"output_path": relative_path, "mime_type": "image/jpeg"}
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = ArtifactStore(temp_dir)
+            with self.assertRaises(ImageGenerationExhausted):
+                ImagePipeline(store, SmallJpegProvider(store), max_attempts=1).generate(scenes()[:1])
+
+            job = store.read_json("images/jobs.json")[0]
+            self.assertEqual((job["attempts"], job["status"]), (1, "failed"))
+
     def test_local_provider_writes_deterministic_escaped_svg(self):
         from app.providers.local import LocalImageProvider
         from app.services.artifacts import ArtifactStore

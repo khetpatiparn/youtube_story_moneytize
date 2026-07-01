@@ -23,6 +23,7 @@ Use `$env:PYTHONPATH='apps/orchestrator/src'` unless installed editable.
 - `python -m app approve-final --project-id project_001 --changes-requested --reviewer human` records final review.
 - `python -m app report --project-id project_001 --video-path render/story.mp4 --quality-score 0.91` writes reports.
 - `python -m app smoke-google-tts --text "..." --output tmp/gemini-tts-smoke.wav` makes one intentional live Gemini TTS request.
+- `python -m app smoke-cloudflare-image --prompt "..." --output tmp/cloudflare-image-smoke.jpg` makes one intentional live Cloudflare image request.
 - `npm.cmd run test:renderer` validates static renderer payloads.
 - `npm.cmd run render:sample` renders `renders/sample.mp4`.
 - `npm.cmd run test:dashboard` validates dashboard data loading and UI contracts.
@@ -38,7 +39,9 @@ Prioritize deterministic tests for prompt hashing, provider contracts, approvals
 
 The local end-to-end test invokes Remotion and requires installed Node dependencies. Image retry is per scene and bounded to three total attempts unless the CLI explicitly overrides it. A render failure is retried by a later `resume`, never by an unbounded loop. Keep the latest validated checkpoint and do not delete fingerprint manifests when diagnosing recovery.
 
-Default tests must set or preserve `TTS_PROVIDER=local`; they must never discover a developer `.env` and consume Gemini quota. Test Google request behavior with an injected fake client. Run the live smoke command only as an explicit verification step.
+Default tests must set or preserve both `IMAGE_PROVIDER=local` and `TTS_PROVIDER=local`; they must never discover a developer `.env` and consume Cloudflare or Gemini quota. Test external request behavior with injected fake clients. Run live smoke commands only as explicit verification steps.
+
+Cloudflare image tests must cover the 1–8 step bound, retryable versus permanent errors, response-size and Base64/JPEG validation, credential sanitization, contained paths, atomic publication, and reuse of validated checkpoint jobs. Renderer tests must retain SVG and JPEG payload coverage and center-crop behavior.
 
 ## Commit & Pull Request Guidelines
 Use short imperative commits. Do not implement on `main` unless approved. PRs should link `/goals`, describe impact, list validation, note services, include render samples for video changes, and state rollback.
@@ -54,6 +57,8 @@ Store secrets in `.env` and commit only `.env.example`. Never log keys or tokens
 
 Gemini TTS publishes mono PCM16 WAV at 24 kHz, retries only transient failures with a finite bound, and has no automatic local fallback. Smoke outputs must remain under repository `tmp/`.
 
+Cloudflare image runs publish one validated JPEG per scene, accept dimensions from 512 through 4096 pixels per side, and retry only transient failures with a finite bound. They have no automatic paid or local fallback. Cloudflare smoke outputs must remain relative `.jpg` paths under repository `tmp/`. Never log account IDs, API tokens, prompts, response bodies, or provider error bodies.
+
 The dashboard is read-only in the first slice; do not add pipeline execution, approval writes, or upload actions without a new goal and tests.
 
-Local content, SVG image, and tone-WAV providers are deterministic POC adapters. Gemini TTS is Preview and does not prove production capacity. AI-generated images and YouTube upload remain out of scope.
+Local content, SVG image, and tone-WAV providers are deterministic POC adapters. Gemini TTS is Preview and Cloudflare Flux continuity is prompt-only; neither proves production capacity. YouTube upload remains out of scope.

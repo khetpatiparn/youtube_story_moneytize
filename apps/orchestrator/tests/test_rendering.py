@@ -39,6 +39,27 @@ class RemotionRendererTests(unittest.TestCase):
             self.assertTrue(staged["audioPath"].startswith("projects/project_001/"))
             self.assertTrue(staged["scenes"][0]["imagePath"].startswith("projects/project_001/"))
 
+    def test_stages_jpeg_scene_assets(self):
+        from app.services.rendering import RemotionRenderer
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp); project = self._fixture(root)
+            jpeg = project / "images/scene.jpg"; jpeg.write_bytes(b"jpeg")
+            payload_path = project / "render/render_payload.json"
+            payload = json.loads(payload_path.read_text(encoding="utf-8"))
+            payload["scenes"][0]["imagePath"] = "images/scene.jpg"
+            payload_path.write_text(json.dumps(payload), encoding="utf-8")
+            calls = []
+            def run(args, **kwargs):
+                calls.append(args)
+                Path(args[7]).write_bytes(b"\x00\x00\x00\x18ftypmp42video")
+                return subprocess.CompletedProcess(args, 0, "", "")
+            RemotionRenderer(root, project, "project_001", command_runner=run).render(
+                "render/render_payload.json"
+            )
+            staged = json.loads((project / "render/remotion_payload.json").read_text(encoding="utf-8"))
+            self.assertTrue(staged["scenes"][0]["imagePath"].endswith("images/scene.jpg"))
+            self.assertEqual(len(calls), 1)
+
     def test_rejects_traversal_and_wrong_project(self):
         from app.services.rendering import RemotionRenderer
         with tempfile.TemporaryDirectory() as temp:

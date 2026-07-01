@@ -4,9 +4,15 @@ from collections.abc import Mapping
 import os
 from pathlib import Path
 
-from app.providers.base import PermanentProviderError, TTSProvider
+from app.providers.base import ImageProvider, PermanentProviderError, TTSProvider
+from app.providers.cloudflare_image import (
+    DEFAULT_MODEL,
+    CloudflareImageProvider,
+    CloudflareRESTImageClient,
+    _parse_model,
+)
 from app.providers.gemini_tts import GeminiTTSProvider, GoogleGenAISpeechClient
-from app.providers.local import LocalTTSProvider
+from app.providers.local import LocalImageProvider, LocalTTSProvider
 from app.services.artifacts import ArtifactStore
 
 
@@ -32,6 +38,43 @@ def _load_simple_env(path: Path) -> None:
         name = name.strip()
         if name and name not in os.environ:
             os.environ[name] = value.strip().strip("'\"")
+
+
+def build_image_provider(store: ArtifactStore, environ: Mapping[str, str]) -> ImageProvider:
+    provider_name = environ.get("IMAGE_PROVIDER", "local").strip().lower()
+    if provider_name == "local":
+        return LocalImageProvider(store)
+    if provider_name != "cloudflare":
+        raise ValueError("IMAGE_PROVIDER must be 'local' or 'cloudflare'")
+
+    account_id = environ.get("CLOUDFLARE_ACCOUNT_ID", "").strip()
+    api_token = environ.get("CLOUDFLARE_API_TOKEN", "").strip()
+    model = environ.get("CLOUDFLARE_IMAGE_MODEL", DEFAULT_MODEL).strip()
+    if not account_id:
+        raise PermanentProviderError(
+            "CLOUDFLARE_ACCOUNT_ID is required for Cloudflare images"
+        )
+    if not api_token:
+        raise PermanentProviderError(
+            "CLOUDFLARE_API_TOKEN is required for Cloudflare images"
+        )
+    if not model:
+        raise ValueError("CLOUDFLARE_IMAGE_MODEL must not be empty")
+    try:
+        _parse_model(model)
+    except ValueError as error:
+        raise ValueError(
+            "CLOUDFLARE_IMAGE_MODEL must use canonical Cloudflare syntax"
+        ) from error
+    try:
+        steps = int(environ.get("CLOUDFLARE_IMAGE_STEPS", "4"))
+    except ValueError as error:
+        raise ValueError("CLOUDFLARE_IMAGE_STEPS must be an integer") from error
+    if not 1 <= steps <= 8:
+        raise ValueError("CLOUDFLARE_IMAGE_STEPS must be between 1 and 8")
+
+    client = CloudflareRESTImageClient(account_id, api_token)
+    return CloudflareImageProvider(store, client=client, model=model, steps=steps)
 
 
 def build_tts_provider(store: ArtifactStore, environ: Mapping[str, str]) -> TTSProvider:

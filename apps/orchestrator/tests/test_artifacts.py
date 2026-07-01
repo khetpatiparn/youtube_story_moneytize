@@ -63,6 +63,43 @@ class ArtifactStoreTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 store.path((Path(temp_dir) / "outside.txt").resolve())
 
+    def test_rejects_windows_invalid_components_portably(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = ArtifactStore(Path(temp_dir) / "project_001")
+            invalid_paths = [
+                "images/a?.jpg",
+                "images/a<.jpg",
+                "images/a>.jpg",
+                'images/a".jpg',
+                "images/a|.jpg",
+                "images/a*.jpg",
+                "images/a\x00.jpg",
+                "images/a\x1f.jpg",
+                "images/trailing.",
+                "images/trailing ",
+                "images/CON.jpg",
+                "images/prn",
+                "images/AuX.txt",
+                "images/NUL.data",
+                "images/COM1.jpg",
+                "images/com9",
+                "images/LPT1.jpg",
+                "images/lpt9.log",
+                "images/name:stream.jpg",
+                "C:drive-relative.jpg",
+            ]
+            for path in invalid_paths:
+                with self.subTest(path=repr(path)), self.assertRaises(ValueError):
+                    store.path(path)
+
+    def test_allows_normal_unicode_components(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = ArtifactStore(Path(temp_dir) / "project_001")
+
+            destination = store.path("รูปภาพ/กระต่าย.jpg")
+
+            self.assertEqual(destination, store.root / "รูปภาพ" / "กระต่าย.jpg")
+
     def test_concurrent_writes_use_isolated_temporary_files(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             store = ArtifactStore(Path(temp_dir) / "project_001")

@@ -6,19 +6,16 @@ import math
 import shutil
 import subprocess
 import wave
-import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
 from app.services.artifacts import ArtifactStore
+from app.services.image_validation import validate_image_file
 from app.services.timeline import wav_duration_seconds
 
 
 QUALITY_CACHE_VERSION = 1
-SVG_TAG = "{http://www.w3.org/2000/svg}svg"
-
-
 @dataclass(frozen=True)
 class QualityCheck:
     name: str
@@ -94,17 +91,12 @@ def validate_project_media(
         if path is None or not path.is_file() or path.is_symlink() or path.stat().st_size == 0:
             image_issues.append(f"scene_images: {scene_id} image is missing")
             continue
+        mime_by_extension = {".svg": "image/svg+xml", ".jpg": "image/jpeg"}
         try:
-            svg = ET.parse(path).getroot()
-            if (
-                path.suffix.lower() != ".svg"
-                or svg.tag != SVG_TAG
-                or svg.get("width") != "1280"
-                or svg.get("height") != "720"
-            ):
-                raise ValueError
-        except (ET.ParseError, OSError, ValueError):
-            image_issues.append(f"scene_images: {scene_id} image must be a parseable 1280x720 SVG")
+            mime_type = mime_by_extension[path.suffix.lower()]
+            validate_image_file(path, mime_type)
+        except (KeyError, OSError, ValueError):
+            image_issues.append(f"scene_images: {scene_id} image must be a valid SVG or JPEG")
     checks.append(_check("scene_images", image_issues))
 
     timeline_issues: list[str] = []

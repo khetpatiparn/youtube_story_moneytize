@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
+from pathlib import PurePosixPath
 from typing import Any
-from xml.etree import ElementTree
 
 from app.providers.base import PermanentProviderError, RetryableProviderError
 from app.services.artifacts import ArtifactStore
+from app.services.image_validation import validate_image_file
 
 
 class ImageGenerationExhausted(RuntimeError):
@@ -26,6 +27,9 @@ class ImagePipeline:
         self.store = store
         self.provider = provider
         self.max_attempts = max_attempts
+        self.output_extension = getattr(provider, "output_extension", "svg")
+        if self.output_extension not in {"svg", "jpg"}:
+            raise PermanentProviderError("unsupported image output extension")
 
     def generate(
         self,
@@ -103,7 +107,10 @@ class ImagePipeline:
                 scene = scene_by_id[scene_id]
                 job["attempts"] = int(job.get("attempts", 0)) + 1
                 try:
-                    image = self.provider.generate(scene, f"images/{scene_id}.svg")
+                    image = self.provider.generate(
+                        scene,
+                        f"images/{scene_id}.{self.output_extension}",
+                    )
                 except RetryableProviderError as error:
                     job.update(
                         retry_count=max(job["attempts"] - 1, 0),
@@ -178,28 +185,29 @@ class ImagePipeline:
             return "scene_id does not match scene"
         if not isinstance(job["attempts"], int) or job["attempts"] < 1:
             return "attempts must be a positive integer"
-        if job["mime_type"] != "image/svg+xml":
-            return "mime_type must be image/svg+xml"
+        extension_to_mime = {
+            ".svg": "image/svg+xml",
+            ".jpg": "image/jpeg",
+        }
+        output_path = job["output_path"]
+        if not isinstance(output_path, str):
+            return "output_path is not a contained project-relative path"
+        extension = PurePosixPath(output_path).suffix
+        expected_mime = extension_to_mime.get(extension)
+        if expected_mime is None:
+            return "output_path extension must be .svg or .jpg"
+        if job["mime_type"] != expected_mime:
+            return f"mime_type is inconsistent with {extension} output"
         try:
-            path = self.store.path(job["output_path"])
+            path = self.store.path(output_path)
         except (TypeError, ValueError):
             return "output_path is not a contained project-relative path"
         if not path.is_file() or path.stat().st_size == 0:
             return "output file is missing or empty"
         try:
-            root = ElementTree.fromstring(path.read_bytes())
-        except (ElementTree.ParseError, OSError):
-            return "output SVG is not parseable"
-        if root.tag != "{http://www.w3.org/2000/svg}svg":
-            return "output XML root must be the SVG namespace element"
-        expected_canvas = {
-            "width": "1280",
-            "height": "720",
-            "viewBox": "0 0 1280 720",
-        }
-        for attribute, expected in expected_canvas.items():
-            if root.get(attribute) != expected:
-                return f"output SVG {attribute} must be {expected!r}"
+            validate_image_file(path, job["mime_type"])
+        except ValueError as error:
+            return str(error)
         return None
 
     def _publish(

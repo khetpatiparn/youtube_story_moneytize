@@ -18,6 +18,7 @@ class EndToEndLocalPipelineTests(unittest.TestCase):
             env = os.environ.copy()
             env["PYTHONPATH"] = str(source_dir)
             env["TTS_PROVIDER"] = "local"
+            env["IMAGE_PROVIDER"] = "local"
 
             def run(*arguments):
                 result = subprocess.run(

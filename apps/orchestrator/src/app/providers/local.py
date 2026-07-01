@@ -58,6 +58,7 @@ class LocalLLMProvider:
 class LocalImageProvider:
     provider = "local"
     model = "deterministic-svg-v1"
+    output_extension = "svg"
 
     def __init__(self, store: ArtifactStore) -> None:
         self.store = store
