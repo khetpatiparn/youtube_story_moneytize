@@ -98,7 +98,7 @@ class RemotionRenderer:
             if not isinstance(focal, list) or len(focal) != 2 or any(not isinstance(value, (int, float)) or value < 0 or value > 1 for value in focal):
                 raise ValueError("focalPoint must contain two values between zero and one")
             item = dict(scene)
-            item["imagePath"] = self._stage_asset(scene.get("imagePath"), {".svg"})
+            item["imagePath"] = self._stage_asset(scene.get("imagePath"), {".svg", ".jpg"})
             staged_scenes.append(item)
         result["scenes"] = staged_scenes
         return result

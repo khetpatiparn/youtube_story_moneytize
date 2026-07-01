@@ -3,8 +3,11 @@ import struct
 import tempfile
 import unittest
 import wave
+from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
+
+from PIL import Image
 
 
 class QualityPipelineTests(unittest.TestCase):
@@ -22,7 +25,7 @@ class QualityPipelineTests(unittest.TestCase):
         for scene in scenes:
             relative = f"images/{scene['scene_id']}.svg"
             (project / relative).write_text(
-                '<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720"></svg>',
+                '<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720"></svg>',
                 encoding="utf-8",
             )
             images.append({"scene_id": scene["scene_id"], "output_path": relative})
@@ -57,6 +60,29 @@ class QualityPipelineTests(unittest.TestCase):
             self.assertEqual(result.issues, [])
             self.assertEqual([check.name for check in result.checks],
                              ["scene_images", "timeline", "audio", "render_payload", "video", "video_duration"])
+
+    def test_valid_jpeg_scene_images_pass_quality_validation(self):
+        from app.services.quality import validate_project_media
+        with tempfile.TemporaryDirectory() as temp:
+            project, scenes, images, timeline = self._valid_project(Path(temp))
+            for scene, image in zip(scenes, images):
+                svg = project / image["output_path"]
+                svg.unlink()
+                relative = f"images/{scene['scene_id']}.jpg"
+                buffer = BytesIO()
+                Image.new("RGB", (1024, 1024), "navy").save(buffer, format="JPEG")
+                (project / relative).write_bytes(buffer.getvalue())
+                image["output_path"] = relative
+            payload_path = project / "render/render_payload.json"
+            payload = json.loads(payload_path.read_text(encoding="utf-8"))
+            for item, image in zip(payload["scenes"], images):
+                item["imagePath"] = image["output_path"]
+            payload_path.write_text(json.dumps(payload), encoding="utf-8")
+            result = validate_project_media(
+                project, scenes, timeline, "audio/narration.wav", "render/story.mp4",
+                "render/render_payload.json", generated_images=images, video_probe=lambda _: 1.0,
+            )
+            self.assertTrue(result.passed, result.issues)
 
     def test_missing_image_and_noncontiguous_timeline_have_stable_issues(self):
         from app.services.quality import validate_project_media
