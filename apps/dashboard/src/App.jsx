@@ -1,7 +1,11 @@
 import React, {useEffect, useState} from "react";
 
+import {ProjectCreateForm} from "./components/ProjectCreateForm.jsx";
+import {SettingsPanel} from "./components/SettingsPanel.jsx";
 import {submitProjectAction} from "./data/actionRequests.js";
 import {loadDashboardProjectsFromApi} from "./data/loadApiProjects.js";
+import {copyProject, createProject, deleteProject} from "./data/projectRequests.js";
+import {loadSettings, saveSettings, testProviderSettings} from "./data/settingsRequests.js";
 import {sampleProject} from "./data/sampleProject.js";
 
 const statusLabels = {
@@ -10,14 +14,41 @@ const statusLabels = {
   pending: "Pending",
 };
 
+const initialProjectForm = {
+  topic: "",
+  duration: 60,
+  profile: "simple_story_th",
+  targetLanguage: "th",
+  deleteConfirmation: "",
+};
+
+const initialSettingsForm = {
+  story_provider: "local",
+  image_provider: "local",
+  projects_dir: "./projects",
+  image_retry_limit: 3,
+  gemini_api_key: "",
+  gemini_api_key_status: {configured: false, suffix: null},
+  cloudflare_account_id: "",
+  cloudflare_account_id_status: {configured: false, suffix: null},
+  cloudflare_api_token: "",
+  cloudflare_api_token_status: {configured: false, suffix: null},
+};
+
 export function App() {
   const [projects, setProjects] = useState([]);
   const [selectedProjectId, setSelectedProjectId] = useState(null);
   const [mode, setMode] = useState("loading");
   const [actionState, setActionState] = useState({running: false, error: "", message: ""});
+  const [projectForm, setProjectForm] = useState(initialProjectForm);
+  const [projectFormError, setProjectFormError] = useState("");
+  const [settingsForm, setSettingsForm] = useState(initialSettingsForm);
+  const [settingsBusy, setSettingsBusy] = useState(false);
+  const [settingsError, setSettingsError] = useState("");
 
   useEffect(() => {
     initializeProjects();
+    initializeSettings();
   }, []);
 
   const selectedProject =
@@ -56,6 +87,15 @@ export function App() {
     }
   }
 
+  async function initializeSettings() {
+    try {
+      const payload = await loadSettings(fetch);
+      setSettingsForm(mapSettingsPayload(payload));
+    } catch {
+      setSettingsForm(initialSettingsForm);
+    }
+  }
+
   function applyProjects(nextProjects) {
     setProjects(nextProjects);
     setSelectedProjectId((currentProjectId) =>
@@ -78,6 +118,22 @@ export function App() {
     return refreshed;
   }
 
+  function handleProjectInputChange(event) {
+    const {name, value} = event.target;
+    setProjectForm((current) => ({
+      ...current,
+      [name]: name === "duration" ? Number(value) : value,
+    }));
+  }
+
+  function handleSettingsInputChange(event) {
+    const {name, value} = event.target;
+    setSettingsForm((current) => ({
+      ...current,
+      [name]: name === "image_retry_limit" ? Number(value) : value,
+    }));
+  }
+
   async function handleAction(action, body) {
     if (!selectedProject) {
       return;
@@ -97,6 +153,94 @@ export function App() {
         error: error instanceof Error ? error.message : "Action failed.",
         message: "",
       });
+    }
+  }
+
+  async function handleCreateProject(event) {
+    event.preventDefault();
+    setProjectFormError("");
+    try {
+      const created = await createProject(fetch, {
+        topic: projectForm.topic,
+        duration: projectForm.duration,
+        profile: projectForm.profile,
+        targetLanguage: projectForm.targetLanguage,
+      });
+      setProjects((current) => [created, ...current]);
+      setSelectedProjectId(created.projectId);
+      setProjectForm(initialProjectForm);
+      setMode("api");
+    } catch (error) {
+      setProjectFormError(error instanceof Error ? error.message : "Project creation failed.");
+    }
+  }
+
+  async function handleCopyProject() {
+    if (!selectedProject) {
+      return;
+    }
+    setProjectFormError("");
+    try {
+      const copied = await copyProject(fetch, selectedProject.projectId);
+      setProjects((current) => [copied, ...current]);
+      setSelectedProjectId(copied.projectId);
+      setMode("api");
+    } catch (error) {
+      setProjectFormError(error instanceof Error ? error.message : "Project copy failed.");
+    }
+  }
+
+  async function handleDeleteProject() {
+    if (!selectedProject) {
+      return;
+    }
+    setProjectFormError("");
+    try {
+      await deleteProject(fetch, selectedProject.projectId, projectForm.deleteConfirmation);
+      const remaining = projects.filter((project) => project.projectId !== selectedProject.projectId);
+      applyProjects(remaining.length > 0 ? remaining : [sampleProject]);
+      setProjectForm((current) => ({...current, deleteConfirmation: ""}));
+    } catch (error) {
+      setProjectFormError(error instanceof Error ? error.message : "Project delete failed.");
+    }
+  }
+
+  async function handleSaveSettings(event) {
+    event.preventDefault();
+    setSettingsBusy(true);
+    setSettingsError("");
+    try {
+      const saved = await saveSettings(fetch, {
+        story_provider: settingsForm.story_provider,
+        image_provider: settingsForm.image_provider,
+        projects_dir: settingsForm.projects_dir,
+        image_retry_limit: settingsForm.image_retry_limit,
+        gemini_api_key: settingsForm.gemini_api_key || undefined,
+        cloudflare_account_id: settingsForm.cloudflare_account_id || undefined,
+        cloudflare_api_token: settingsForm.cloudflare_api_token || undefined,
+      });
+      setSettingsForm((current) => ({
+        ...mapSettingsPayload(saved),
+        gemini_api_key: "",
+        cloudflare_account_id: "",
+        cloudflare_api_token: "",
+      }));
+    } catch (error) {
+      setSettingsError(error instanceof Error ? error.message : "Settings save failed.");
+    } finally {
+      setSettingsBusy(false);
+    }
+  }
+
+  async function handleTestProvider(provider) {
+    setSettingsBusy(true);
+    setSettingsError("");
+    try {
+      await testProviderSettings(fetch, provider);
+    } catch (error) {
+      setSettingsError(error instanceof Error ? error.message : "Provider test failed.");
+    } finally {
+      setSettingsBusy(false);
     }
   }
 
@@ -155,6 +299,26 @@ export function App() {
           </section>
 
           <aside className="right-rail">
+            <ProjectCreateForm
+              busy={actionState.running}
+              error={projectFormError}
+              onChange={handleProjectInputChange}
+              onCopy={handleCopyProject}
+              onCreate={handleCreateProject}
+              onDelete={handleDeleteProject}
+              selectedProjectId={selectedProject?.projectId}
+              value={projectForm}
+            />
+
+            <SettingsPanel
+              busy={settingsBusy}
+              error={settingsError}
+              onChange={handleSettingsInputChange}
+              onSave={handleSaveSettings}
+              onTest={handleTestProvider}
+              value={settingsForm}
+            />
+
             <section className="panel">
               <h2>Control Panel</h2>
               <div className="action-stack">
@@ -253,6 +417,21 @@ export function App() {
       </section>
     </main>
   );
+}
+
+function mapSettingsPayload(payload) {
+  return {
+    story_provider: payload.story_provider ?? "local",
+    image_provider: payload.image_provider ?? "local",
+    projects_dir: payload.projects_dir ?? "./projects",
+    image_retry_limit: payload.image_retry_limit ?? 3,
+    gemini_api_key: "",
+    gemini_api_key_status: payload.gemini_api_key ?? {configured: false, suffix: null},
+    cloudflare_account_id: "",
+    cloudflare_account_id_status: payload.cloudflare_account_id ?? {configured: false, suffix: null},
+    cloudflare_api_token: "",
+    cloudflare_api_token_status: payload.cloudflare_api_token ?? {configured: false, suffix: null},
+  };
 }
 
 function formatScore(score) {

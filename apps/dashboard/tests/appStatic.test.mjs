@@ -7,6 +7,8 @@ test("dashboard app exposes the media qa workspace sections", async () => {
 
   assert.match(appSource, /Media QA/);
   assert.match(appSource, /Project Queue/);
+  assert.match(appSource, /ProjectCreateForm/);
+  assert.match(appSource, /SettingsPanel/);
   assert.match(appSource, /Scene Review/);
   assert.match(appSource, /Quality Report/);
   assert.match(appSource, /Approval Summary/);
@@ -14,4 +16,5 @@ test("dashboard app exposes the media qa workspace sections", async () => {
   assert.match(appSource, /Approve script/);
   assert.match(appSource, /Request script changes/);
   assert.match(appSource, /Approve final/);
+  assert.doesNotMatch(appSource, /localStorage/);
 });
