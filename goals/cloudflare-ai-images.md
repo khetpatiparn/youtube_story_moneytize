@@ -1,6 +1,6 @@
 # Cloudflare AI Scene Images
 
-Status: implementation and live acceptance complete; final verification and delivery in progress
+Status: completed on 2026-07-01
 
 ## Outcome
 
@@ -25,8 +25,8 @@ Deliver an opt-in Cloudflare Workers AI image workflow that creates one validate
   (10 tests), end-to-end, dashboard production build, compile, and `git diff --check`
   verification pass.
 - [x] Implementation, spec, code-quality, live-regression, and final inline review findings are resolved.
-- [ ] The feature branch is merged into `main`.
-- [ ] Merged `main` is reverified, pushed to `origin`, and local/remote commit IDs match.
+- [x] The feature branch is merged into `main`.
+- [x] Merged `main` is reverified, pushed to `origin`, and local/remote commit IDs match.
 
 ## Safety and recovery
 
