@@ -189,6 +189,83 @@ class DashboardControlServiceTests(unittest.TestCase):
         self.assertEqual(project["waitingFor"], "script")
         self.assertEqual(project["availableActions"], ["resume", "approve_script"])
 
+    def test_create_project_returns_dashboard_summary(self):
+        created = self._service().create_project(
+            {
+                "topic": "River spirit",
+                "duration": 60,
+                "profile": "simple_story_th",
+                "targetLanguage": "th",
+            }
+        )
+
+        self.assertEqual(created["status"], "created")
+        self.assertEqual(created["availableActions"], ["run"])
+        self.assertEqual(created["targetDurationSeconds"], 60)
+        self.assertEqual(created["targetLanguage"], "th")
+
+    def test_create_project_rejects_unknown_field(self):
+        with self.assertRaisesRegex(ValueError, "unknown fields"):
+            self._service().create_project(
+                {
+                    "topic": "River spirit",
+                    "duration": 60,
+                    "profile": "simple_story_th",
+                    "admin": True,
+                }
+            )
+
+    def test_copy_project_duplicates_metadata_without_outputs(self):
+        original = self._create_project("project_001")
+        self.projects.save_project(
+            original.with_status("awaiting_script_approval", current_node="script_approval")
+        )
+        project_dir = self.projects.project_dir("project_001")
+        (project_dir / "input" / "prompt.txt").write_text("prompt", encoding="utf-8")
+        (project_dir / "render" / "story.mp4").write_text("video", encoding="utf-8")
+        self._save_checkpoint(
+            "project_001",
+            status="awaiting_script_approval",
+            current_node="script_approval",
+            waiting_for="script",
+        )
+
+        copied = self._service().copy_project("project_001")
+
+        copied_dir = self.projects.project_dir(copied["projectId"])
+        self.assertEqual(copied["status"], "created")
+        self.assertEqual(copied["availableActions"], ["run"])
+        self.assertTrue((copied_dir / "input" / "prompt.txt").exists())
+        self.assertFalse((copied_dir / "render" / "story.mp4").exists())
+        self.assertIsNone(self.checkpoints.load_latest(copied["projectId"]))
+
+    def test_delete_project_requires_inactive_job_and_exact_confirmation(self):
+        self._create_project("project_001")
+
+        with self.assertRaisesRegex(ValueError, "confirmProjectId"):
+            self._service().delete_project("project_001", confirm_project_id="wrong")
+
+        deleted = self._service().delete_project("project_001", confirm_project_id="project_001")
+
+        self.assertEqual(deleted, {"ok": True, "projectId": "project_001"})
+        self.assertFalse(self.projects.project_dir("project_001").exists())
+
+    def test_delete_project_rejects_active_checkpoint_job(self):
+        self._create_project("project_001")
+        self.checkpoints.save_checkpoint(
+            "project_001",
+            {
+                "project_id": "project_001",
+                "status": "awaiting_script_approval",
+                "current_node": "script_approval",
+                "waiting_for": "script",
+                "job_status": "running",
+            },
+        )
+
+        with self.assertRaisesRegex(ValueError, "active"):
+            self._service().delete_project("project_001", confirm_project_id="project_001")
+
     def test_rejects_project_ids_outside_projects_directory(self):
         self._create_project()
 

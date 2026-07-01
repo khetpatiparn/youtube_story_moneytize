@@ -1,15 +1,19 @@
 from __future__ import annotations
 
 import json
+import shutil
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 from app.repositories.checkpoint_repository import CheckpointRecord, CheckpointRepository
 from app.repositories.project_repository import ProjectRepository
-from app.schemas.project import ProjectMetadata
+from app.schemas.project import CreateProjectRequest, ProjectMetadata
 from app.services.approval_reporting import ApprovalReportingService, ApprovalRequest
 from app.services.pipeline_runner import PipelineRunner, approval_stage_is_eligible
+
+CREATE_FIELDS = {"topic", "duration", "profile", "targetLanguage", "projectId"}
+COPY_DIRECTORIES = ("input", "research", "outline", "script", "scenes", "prompts", "thumbnail")
 
 
 def _read_optional_json(path: Path, fallback: Any) -> Any:
@@ -113,6 +117,76 @@ class DashboardControlService:
             raise KeyError(project_id) from error
         checkpoint = self.checkpoints.load_latest(project_id)
         return build_project_summary(metadata, checkpoint, project_dir)
+
+    def create_project(self, payload: dict[str, object]) -> dict[str, object]:
+        unknown = set(payload) - CREATE_FIELDS
+        if unknown:
+            raise ValueError(f"unknown fields: {', '.join(sorted(unknown))}")
+
+        topic = payload.get("topic", "")
+        duration = payload.get("duration")
+        profile = payload.get("profile", "")
+        target_language = payload.get("targetLanguage", "th")
+        project_id = payload.get("projectId")
+
+        if not isinstance(topic, str) or len(topic.strip()) > 500:
+            raise ValueError("topic must be a non-empty string up to 500 characters")
+        if isinstance(duration, bool) or not isinstance(duration, int) or not 15 <= duration <= 3600:
+            raise ValueError("duration must be an integer between 15 and 3600")
+        if not isinstance(profile, str) or not profile.strip() or len(profile.strip()) > 64:
+            raise ValueError("profile must be a non-empty string up to 64 characters")
+        if not isinstance(target_language, str) or not target_language.strip() or len(target_language.strip()) > 16:
+            raise ValueError("targetLanguage must be a non-empty string up to 16 characters")
+        if project_id is not None and (not isinstance(project_id, str) or not project_id.strip()):
+            raise ValueError("projectId must be a non-empty string when provided")
+
+        request = CreateProjectRequest(
+            topic=topic,
+            duration=duration,
+            profile=profile,
+            target_language=target_language,
+        )
+        metadata = self.projects.create_project(request, project_id=project_id)
+        return build_project_summary(metadata, None, self.projects.project_dir(metadata.project_id))
+
+    def copy_project(self, project_id: str) -> dict[str, object]:
+        metadata = self.projects.load_project(project_id)
+        source_dir = self.projects.project_dir(project_id)
+        copied = self.projects.create_project(
+            CreateProjectRequest(
+                topic=metadata.topic,
+                duration=metadata.target_duration_seconds,
+                profile=metadata.channel_style_profile,
+                target_language=metadata.target_language,
+            )
+        )
+        copied_dir = self.projects.project_dir(copied.project_id)
+        for name in COPY_DIRECTORIES:
+            source = source_dir / name
+            target = copied_dir / name
+            if not source.exists():
+                continue
+            shutil.rmtree(target, ignore_errors=True)
+            shutil.copytree(source, target)
+        return build_project_summary(copied, None, copied_dir)
+
+    def delete_project(self, project_id: str, *, confirm_project_id: str) -> dict[str, object]:
+        if confirm_project_id != project_id:
+            raise ValueError("confirmProjectId must exactly match the project id")
+        checkpoint = self.checkpoints.load_latest(project_id)
+        if checkpoint is not None and checkpoint.state.get("job_status") == "running":
+            raise ValueError("project has an active job")
+        project_dir = self.projects.project_dir(project_id)
+        if not project_dir.exists():
+            raise KeyError(project_id)
+        trash_root = self.projects.projects_dir / ".trash"
+        trash_root.mkdir(parents=True, exist_ok=True)
+        trash_dir = trash_root / project_id
+        if trash_dir.exists():
+            shutil.rmtree(trash_dir, ignore_errors=True)
+        project_dir.replace(trash_dir)
+        shutil.rmtree(trash_dir, ignore_errors=True)
+        return {"ok": True, "projectId": project_id}
 
 
 def build_project_summary(

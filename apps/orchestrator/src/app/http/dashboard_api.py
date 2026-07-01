@@ -93,6 +93,22 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             except ValueError as error:
                 self._write_json(400, {"ok": False, "error": str(error)})
             return
+        if parts == ["api", "projects"]:
+            try:
+                body = self._read_json_body(require_json=True)
+                self._write_json(201, self.server.summary_service.create_project(body))
+            except ValueError as error:
+                self._write_json(400, {"ok": False, "error": str(error)})
+            return
+        if len(parts) == 4 and parts[:2] == ["api", "projects"] and parts[3] == "copy":
+            try:
+                self._read_json_body(require_json=True)
+                self._write_json(201, self.server.summary_service.copy_project(parts[2]))
+            except KeyError:
+                self._write_json(404, {"ok": False, "error": "Project not found."})
+            except ValueError as error:
+                self._write_json(400, {"ok": False, "error": str(error)})
+            return
         if len(parts) != 4 or parts[:2] != ["api", "projects"]:
             self._write_json(404, {"ok": False, "error": "Not found."})
             return
@@ -132,6 +148,28 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             self._write_json(400, {"ok": False, "error": str(error)})
         finally:
             self.server.gate.release(project_id)
+
+    def do_DELETE(self) -> None:
+        parts = _path_parts(self.path)
+        try:
+            if len(parts) != 3 or parts[:2] != ["api", "projects"]:
+                self._write_json(404, {"ok": False, "error": "Not found."})
+                return
+            body = self._read_json_body(require_json=True)
+            confirm_project_id = body.get("confirmProjectId")
+            if not isinstance(confirm_project_id, str):
+                raise ValueError("confirmProjectId must be a string")
+            self._write_json(
+                200,
+                self.server.summary_service.delete_project(
+                    parts[2],
+                    confirm_project_id=confirm_project_id,
+                ),
+            )
+        except KeyError:
+            self._write_json(404, {"ok": False, "error": "Project not found."})
+        except ValueError as error:
+            self._write_json(400, {"ok": False, "error": str(error)})
 
     def log_message(self, format: str, *args) -> None:  # noqa: A003
         return

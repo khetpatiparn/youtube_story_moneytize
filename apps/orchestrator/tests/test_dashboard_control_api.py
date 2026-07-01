@@ -36,6 +36,39 @@ class _FakeSummaryService:
         except KeyError as error:
             raise KeyError(project_id) from error
 
+    def create_project(self, payload):
+        if "admin" in payload:
+            raise ValueError("unknown fields: admin")
+        created = {
+            "projectId": payload.get("projectId", "project_002"),
+            "topic": payload["topic"],
+            "status": "created",
+            "currentNode": None,
+            "waitingFor": None,
+            "targetDurationSeconds": payload["duration"],
+            "targetLanguage": payload.get("targetLanguage", "th"),
+            "source": "live",
+            "availableActions": ["run"],
+        }
+        self.projects[created["projectId"]] = created
+        return created
+
+    def copy_project(self, project_id: str):
+        copied = dict(self.get_project(project_id))
+        copied["projectId"] = f"{project_id}_copy"
+        copied["status"] = "created"
+        copied["currentNode"] = None
+        copied["waitingFor"] = None
+        copied["availableActions"] = ["run"]
+        self.projects[copied["projectId"]] = copied
+        return copied
+
+    def delete_project(self, project_id: str, confirm_project_id: str):
+        if confirm_project_id != project_id:
+            raise ValueError("confirmProjectId must exactly match the project id")
+        self.projects.pop(project_id, None)
+        return {"ok": True, "projectId": project_id}
+
 
 class _FakeActionAdapter:
     def __init__(self):
@@ -194,6 +227,37 @@ class DashboardControlApiTests(unittest.TestCase):
         self.assertEqual(response.json, {"ok": True, "provider": "gemini"})
         self.assertEqual(self.settings_tester.calls, ["gemini"])
 
+    def test_create_project_endpoint_returns_created_summary(self):
+        response = self.request(
+            "POST",
+            "/api/projects",
+            {"topic": "River spirit", "duration": 60, "profile": "simple_story_th", "targetLanguage": "th"},
+        )
+
+        self.assertEqual(response.status, 201)
+        self.assertEqual(response.json["status"], "created")
+        self.assertEqual(response.json["availableActions"], ["run"])
+
+    def test_create_project_rejects_unknown_field(self):
+        response = self.request(
+            "POST",
+            "/api/projects",
+            {"topic": "x", "duration": 60, "profile": "simple_story_th", "admin": True},
+        )
+
+        self.assertEqual(response.status, 400)
+
+    def test_copy_then_delete_requires_exact_confirmation(self):
+        copied = self.request("POST", "/api/projects/project_001/copy", {})
+        denied = self.request(
+            "DELETE",
+            f"/api/projects/{copied.json['projectId']}",
+            {"confirmProjectId": "wrong"},
+        )
+
+        self.assertEqual(copied.status, 201)
+        self.assertEqual(denied.status, 400)
+
     def test_run_endpoint_invokes_action_adapter(self):
         response = self.request("POST", "/api/projects/project_001/run")
 
@@ -261,6 +325,11 @@ class DashboardControlApiTests(unittest.TestCase):
 
     def test_put_settings_requires_application_json(self):
         response = self.request("PUT", "/api/settings", "{}", {"Content-Type": "text/plain"})
+
+        self.assertEqual(response.status, 400)
+
+    def test_delete_project_requires_application_json(self):
+        response = self.request("DELETE", "/api/projects/project_001", "{}", {"Content-Type": "text/plain"})
 
         self.assertEqual(response.status, 400)
 
