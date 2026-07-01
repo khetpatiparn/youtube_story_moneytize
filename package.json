@@ -7,8 +7,8 @@
     "test:renderer": "node --test apps/renderer/tests/*.test.mjs",
     "test:dashboard": "node --test apps/dashboard/tests/*.test.mjs",
     "prepare:dashboard-data": "node apps/dashboard/scripts/exportDashboardData.mjs",
-    "dev:dashboard": "npm run prepare:dashboard-data && vite apps/dashboard --host 127.0.0.1",
-    "build:dashboard": "npm run prepare:dashboard-data && vite build apps/dashboard --outDir ../../dist/dashboard --emptyOutDir",
+    "dev:dashboard": "npm run prepare:dashboard-data && vite apps/dashboard --config apps/dashboard/vite.config.mjs --host 127.0.0.1",
+    "build:dashboard": "npm run prepare:dashboard-data && vite build apps/dashboard --config apps/dashboard/vite.config.mjs --outDir ../../dist/dashboard --emptyOutDir",
     "render:sample": "remotion render apps/renderer/src/index.tsx YouTubeStory renders/sample.mp4 --props apps/renderer/sample/render_payload.json"
   },
   "dependencies": {

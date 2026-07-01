@@ -106,4 +106,19 @@ npm.cmd run dev:dashboard
 npm.cmd run build:dashboard
 ```
 
-The Media QA dashboard lives in `apps/dashboard/`. The data export step reads local project data from `projects/{project_id}/` when available and writes `apps/dashboard/public/dashboard-data.json`; when no generated projects exist it writes bundled demo data. The first dashboard slice is read-only.
+The Media QA dashboard lives in `apps/dashboard/`. The data export step reads local project data from `projects/{project_id}/` when available and writes `apps/dashboard/public/dashboard-data.json`; when no generated projects exist it writes bundled demo data.
+
+For live local controls, run the API and dashboard in two terminals:
+
+```powershell
+# Terminal 1
+$env:PYTHONPATH='apps/orchestrator/src'
+python -m app dashboard-api --host 127.0.0.1 --port 8000
+
+# Terminal 2
+npm.cmd run dev:dashboard
+```
+
+`dev:dashboard` proxies `/api` to `http://127.0.0.1:8000`. When the API is available, the dashboard reads live project state and can trigger `run`, `resume`, `approve-script`, and `approve-final` for existing projects. When the API is unavailable, the UI falls back to `dashboard-data.json` or bundled demo data.
+
+The browser control layer is local-only. It does not create projects, edit provider configuration, upload files, or publish to YouTube.
