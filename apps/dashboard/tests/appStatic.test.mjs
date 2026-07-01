@@ -10,4 +10,8 @@ test("dashboard app exposes the media qa workspace sections", async () => {
   assert.match(appSource, /Scene Review/);
   assert.match(appSource, /Quality Report/);
   assert.match(appSource, /Approval Summary/);
+  assert.match(appSource, /Control Panel/);
+  assert.match(appSource, /Approve script/);
+  assert.match(appSource, /Request script changes/);
+  assert.match(appSource, /Approve final/);
 });

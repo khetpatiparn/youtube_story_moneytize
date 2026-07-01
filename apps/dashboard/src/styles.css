@@ -184,6 +184,50 @@ h2 {
   align-content: start;
 }
 
+.action-stack {
+  display: grid;
+  gap: 10px;
+}
+
+.action-button {
+  width: 100%;
+  border: 1px solid #94a3b8;
+  border-radius: 8px;
+  background: #f8fafc;
+  color: #172026;
+  padding: 10px 12px;
+  cursor: pointer;
+}
+
+.action-button.primary {
+  border-color: #0f766e;
+  background: #0f766e;
+  color: #f8fafc;
+}
+
+.action-button.danger {
+  border-color: #b91c1c;
+  color: #b91c1c;
+}
+
+.action-button:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.action-message {
+  margin: 12px 0 0;
+  font-size: 14px;
+}
+
+.action-message.success {
+  color: #0f766e;
+}
+
+.action-message.error {
+  color: #b91c1c;
+}
+
 .issue-list {
   padding-left: 18px;
 }
