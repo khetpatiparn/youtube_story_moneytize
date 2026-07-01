@@ -37,7 +37,7 @@ class ContentPipeline:
             state["channel_style_profile"],
             script_version,
         )
-        self._validate_content(content)
+        validate_story_content(content)
 
         serialized = {
             "content/outline.json": self._json_bytes(content["outline"]),
@@ -51,6 +51,8 @@ class ContentPipeline:
             **content,
             "scene_count": len(content["scenes"]),
             "script_version": script_version,
+            "content_provider": getattr(self.provider, "provider", "unknown"),
+            "content_model": getattr(self.provider, "model", "unknown"),
             "status": "content_ready",
             "current_node": "content",
             "outline_path": paths["content/outline.json"],
@@ -62,34 +64,34 @@ class ContentPipeline:
     def _json_bytes(content: Any) -> bytes:
         return (json.dumps(content, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
 
-    @staticmethod
-    def _validate_content(content: Any) -> None:
-        if not isinstance(content, dict) or set(content) != {"outline", "script", "scenes"}:
-            raise ValueError("Invalid provider output: expected outline, script, and scenes")
-        outline = content["outline"]
-        scenes = content["scenes"]
+
+def validate_story_content(content: Any) -> None:
+    if not isinstance(content, dict) or set(content) != {"outline", "script", "scenes"}:
+        raise ValueError("Invalid provider output: expected outline, script, and scenes")
+    outline = content["outline"]
+    scenes = content["scenes"]
+    if (
+        not isinstance(outline, dict)
+        or set(outline) != {"title", "beats"}
+        or not isinstance(outline["title"], str)
+        or not isinstance(outline["beats"], list)
+        or not isinstance(content["script"], str)
+        or not isinstance(scenes, list)
+        or not scenes
+    ):
+        raise ValueError("Invalid provider output shape")
+    required_scene_keys = {"scene_id", "title", "narration", "prompt", "motion", "focal_point"}
+    for index, scene in enumerate(scenes, 1):
         if (
-            not isinstance(outline, dict)
-            or set(outline) != {"title", "beats"}
-            or not isinstance(outline["title"], str)
-            or not isinstance(outline["beats"], list)
-            or not isinstance(content["script"], str)
-            or not isinstance(scenes, list)
-            or not scenes
+            not isinstance(scene, dict)
+            or set(scene) != required_scene_keys
+            or scene["scene_id"] != f"scene_{index:03d}"
+            or scene["motion"] != "slow_push"
+            or scene["focal_point"] != [0.5, 0.5]
+            or any(not isinstance(scene[key], str) for key in ("title", "narration", "prompt"))
         ):
-            raise ValueError("Invalid provider output shape")
-        required_scene_keys = {"scene_id", "title", "narration", "prompt", "motion", "focal_point"}
-        for index, scene in enumerate(scenes, 1):
-            if (
-                not isinstance(scene, dict)
-                or set(scene) != required_scene_keys
-                or scene["scene_id"] != f"scene_{index:03d}"
-                or scene["motion"] != "slow_push"
-                or scene["focal_point"] != [0.5, 0.5]
-                or any(not isinstance(scene[key], str) for key in ("title", "narration", "prompt"))
-            ):
-                raise ValueError("Invalid provider output scene")
-        if outline["beats"] != [scene["title"] for scene in scenes]:
-            raise ValueError("Invalid provider output beats")
-        if content["script"] != "\n\n".join(scene["narration"] for scene in scenes):
-            raise ValueError("Invalid provider output script")
+            raise ValueError("Invalid provider output scene")
+    if outline["beats"] != [scene["title"] for scene in scenes]:
+        raise ValueError("Invalid provider output beats")
+    if content["script"] != "\n\n".join(scene["narration"] for scene in scenes):
+        raise ValueError("Invalid provider output script")

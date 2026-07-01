@@ -6,8 +6,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from xml.etree import ElementTree
 
-from PIL import Image, UnidentifiedImageError
-
 
 MAX_IMAGE_BYTES = 16 * 1024 * 1024
 
@@ -58,6 +56,10 @@ def _validate_svg(content: bytes) -> ImageMetadata:
 
 
 def _validate_jpeg(content: bytes) -> ImageMetadata:
+    try:
+        from PIL import Image, UnidentifiedImageError
+    except ModuleNotFoundError as error:
+        raise ValueError("JPEG validation requires Pillow") from error
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("error", Image.DecompressionBombWarning)

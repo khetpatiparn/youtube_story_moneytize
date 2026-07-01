@@ -17,6 +17,7 @@ class EndToEndLocalPipelineTests(unittest.TestCase):
             checkpoint = root / "checkpoints.sqlite"
             env = os.environ.copy()
             env["PYTHONPATH"] = str(source_dir)
+            env["LLM_PROVIDER"] = "local"
             env["TTS_PROVIDER"] = "local"
             env["IMAGE_PROVIDER"] = "local"
 

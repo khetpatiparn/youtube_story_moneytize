@@ -25,6 +25,7 @@ class PipelineRunner:
         projects: ProjectRepository,
         checkpoints: CheckpointRepository,
         *,
+        content_provider: Any = None,
         image_provider: Any = None,
         tts_provider: Any = None,
         renderer: Any = None,
@@ -34,6 +35,7 @@ class PipelineRunner:
     ) -> None:
         self.projects = projects
         self.checkpoints = checkpoints
+        self.content_provider = content_provider
         self.image_provider = image_provider
         self.tts_provider = tts_provider
         self.renderer = renderer
@@ -57,7 +59,10 @@ class PipelineRunner:
         if existing is not None:
             return self.reconcile_state(project_id, existing.state)
 
-        pipeline = ContentPipeline(ArtifactStore(self.projects.project_dir(project_id)))
+        pipeline = ContentPipeline(
+            ArtifactStore(self.projects.project_dir(project_id)),
+            self.content_provider,
+        )
         state = pipeline.generate(metadata.to_graph_state())
         paused: VideoProjectState = {
             **state,

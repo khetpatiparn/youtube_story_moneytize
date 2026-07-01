@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+import math
 import os
 from pathlib import Path
 
@@ -11,8 +12,9 @@ from app.providers.cloudflare_image import (
     CloudflareRESTImageClient,
     _parse_model,
 )
+from app.providers.gemini_story import GeminiStoryProvider, GoogleGenAIStoryClient
 from app.providers.gemini_tts import GeminiTTSProvider, GoogleGenAISpeechClient
-from app.providers.local import LocalImageProvider, LocalTTSProvider
+from app.providers.local import LocalImageProvider, LocalLLMProvider, LocalTTSProvider
 from app.services.artifacts import ArtifactStore
 
 
@@ -102,5 +104,42 @@ def build_tts_provider(store: ArtifactStore, environ: Mapping[str, str]) -> TTSP
         model=model,
         voice=voice,
         max_attempts=max_attempts,
+        client=client,
+    )
+
+
+def build_story_provider(store: ArtifactStore, environ: Mapping[str, str]):
+    del store
+    provider_name = environ.get("LLM_PROVIDER", "local").strip().lower()
+    if provider_name == "local":
+        return LocalLLMProvider()
+    if provider_name != "google":
+        raise ValueError("LLM_PROVIDER must be 'local' or 'google'")
+
+    api_key = environ.get("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        raise PermanentProviderError("GEMINI_API_KEY is required for Google story generation")
+    model = environ.get("GEMINI_LLM_MODEL", "gemini-2.5-flash").strip()
+    if not model:
+        raise ValueError("GEMINI_LLM_MODEL must not be empty")
+    try:
+        max_attempts = int(environ.get("GEMINI_LLM_MAX_ATTEMPTS", "3"))
+    except ValueError as error:
+        raise ValueError("GEMINI_LLM_MAX_ATTEMPTS must be an integer") from error
+    if not 1 <= max_attempts <= 5:
+        raise ValueError("GEMINI_LLM_MAX_ATTEMPTS must be between 1 and 5")
+    try:
+        temperature = float(environ.get("GEMINI_LLM_TEMPERATURE", "0.7"))
+    except ValueError as error:
+        raise ValueError("GEMINI_LLM_TEMPERATURE must be a number") from error
+    if not math.isfinite(temperature) or not 0 <= temperature <= 2:
+        raise ValueError("GEMINI_LLM_TEMPERATURE must be between 0 and 2")
+
+    client = GoogleGenAIStoryClient(api_key)
+    return GeminiStoryProvider(
+        api_key=api_key,
+        model=model,
+        max_attempts=max_attempts,
+        temperature=temperature,
         client=client,
     )

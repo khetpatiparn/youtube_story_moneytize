@@ -23,7 +23,24 @@ class PipelineRunnerTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temp_dir:
             projects, checkpoints = self._setup(temp_dir)
-            state = PipelineRunner(projects, checkpoints).run("project_001")
+            provider = type(
+                "Provider",
+                (),
+                {
+                    "provider": "google",
+                    "model": "gemini-2.5-flash",
+                    "generate_story": lambda self, *args: {
+                        "outline": {"title": "Story", "beats": ["A", "B", "C"]},
+                        "script": "one\n\ntwo\n\nthree",
+                        "scenes": [
+                            {"scene_id": "scene_001", "title": "A", "narration": "one", "prompt": "p1", "motion": "slow_push", "focal_point": [0.5, 0.5]},
+                            {"scene_id": "scene_002", "title": "B", "narration": "two", "prompt": "p2", "motion": "slow_push", "focal_point": [0.5, 0.5]},
+                            {"scene_id": "scene_003", "title": "C", "narration": "three", "prompt": "p3", "motion": "slow_push", "focal_point": [0.5, 0.5]},
+                        ],
+                    },
+                },
+            )()
+            state = PipelineRunner(projects, checkpoints, content_provider=provider).run("project_001")
 
             self.assertEqual(state["status"], "awaiting_script_approval")
             self.assertEqual(state["current_node"], "script_approval")
@@ -32,6 +49,42 @@ class PipelineRunnerTests(unittest.TestCase):
             metadata = projects.load_project("project_001")
             self.assertEqual(metadata.status, state["status"])
             self.assertEqual(metadata.current_node, state["current_node"])
+
+    def test_first_run_injects_content_provider_only_for_fresh_generation(self):
+        from app.services.pipeline_runner import PipelineRunner
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            projects, checkpoints = self._setup(temp_dir)
+            provider = object()
+
+            with patch("app.services.pipeline_runner.ContentPipeline") as pipeline_type:
+                pipeline = pipeline_type.return_value
+                pipeline.generate.return_value = {
+                    "topic": "A patient river spirit",
+                    "target_duration_seconds": 180,
+                    "target_language": "th",
+                    "channel_style_profile": "simple_story_th",
+                    "outline": {"title": "Story", "beats": ["A", "B", "C"]},
+                    "script": "one\n\ntwo\n\nthree",
+                    "scenes": [
+                        {"scene_id": "scene_001", "title": "A", "narration": "one", "prompt": "p1", "motion": "slow_push", "focal_point": [0.5, 0.5]},
+                        {"scene_id": "scene_002", "title": "B", "narration": "two", "prompt": "p2", "motion": "slow_push", "focal_point": [0.5, 0.5]},
+                        {"scene_id": "scene_003", "title": "C", "narration": "three", "prompt": "p3", "motion": "slow_push", "focal_point": [0.5, 0.5]},
+                    ],
+                    "scene_count": 3,
+                    "script_version": 1,
+                    "content_provider": "google",
+                    "content_model": "gemini-2.5-flash",
+                }
+
+                PipelineRunner(projects, checkpoints, content_provider=provider).run("project_001")
+                pipeline_type.assert_called_once()
+                self.assertIs(pipeline_type.call_args.args[1], provider)
+
+                checkpoints.save_checkpoint("project_001", pipeline.generate.return_value | {"status": "awaiting_script_approval", "current_node": "script_approval", "waiting_for": "script"})
+                pipeline_type.reset_mock()
+                PipelineRunner(projects, checkpoints, content_provider=provider).run("project_001")
+                pipeline_type.assert_not_called()
 
     def test_resume_without_approval_returns_checkpoint_without_modifying_artifacts(self):
         from app.services.pipeline_runner import PipelineRunner

@@ -17,6 +17,7 @@ from app.providers.cloudflare_image import (
     CloudflareImageProvider,
     CloudflareRESTImageClient,
 )
+from app.providers.gemini_story import GeminiStoryProvider, GeminiStoryClient
 from app.providers.gemini_tts import GeminiSpeechClient, GeminiTTSProvider, GoogleGenAISpeechClient
 from app.repositories.checkpoint_repository import CheckpointRepository
 from app.repositories.project_repository import ProjectRepository
@@ -27,11 +28,17 @@ from app.services.approval_reporting import (
     ReportRequest,
 )
 from app.services.artifacts import ArtifactStore
-from app.services.config import build_image_provider, build_tts_provider, load_environment
+from app.services.config import (
+    build_image_provider,
+    build_story_provider,
+    build_tts_provider,
+    load_environment,
+)
 from app.services.image_validation import validate_image_file
 from app.services.pipeline_runner import PipelineRunner
 from app.services.quality import ffprobe_duration
 from app.services.rendering import RemotionRenderer
+from app.services.content_pipeline import validate_story_content
 from app.services.timeline import wav_metadata
 
 
@@ -56,6 +63,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _write_project_report(args)
     if args.command == "smoke-google-tts":
         return _smoke_google_tts(args)
+    if args.command == "smoke-google-story":
+        return _smoke_google_story(args)
     if args.command == "smoke-cloudflare-image":
         return _smoke_cloudflare_image(args)
 
@@ -109,6 +118,14 @@ def _build_parser() -> argparse.ArgumentParser:
     smoke.add_argument("--text", required=True)
     smoke.add_argument("--output", default="tmp/gemini-tts-smoke.wav")
 
+    story_smoke = subparsers.add_parser(
+        "smoke-google-story", help="Run one intentional Gemini story request"
+    )
+    story_smoke.add_argument("--topic", required=True)
+    story_smoke.add_argument("--duration", type=int, required=True)
+    story_smoke.add_argument("--profile", required=True)
+    story_smoke.add_argument("--output", default="tmp/gemini-story-smoke.json")
+
     image_smoke = subparsers.add_parser(
         "smoke-cloudflare-image", help="Run one intentional Cloudflare image request"
     )
@@ -138,7 +155,10 @@ def _show_status(args: argparse.Namespace) -> int:
 
 
 def _run_project(args: argparse.Namespace) -> int:
-    result = _build_pipeline_runner(args).run(args.project_id)
+    try:
+        result = _build_pipeline_runner(args, configure_content=True).run(args.project_id)
+    except (ValueError, ProviderError) as error:
+        raise SystemExit(str(error)) from error
     print(json.dumps(result, ensure_ascii=False))
     return 0
 
@@ -226,6 +246,72 @@ def _smoke_google_tts(
                 "sample_rate": metadata.sample_rate,
                 "duration_seconds": metadata.duration_seconds,
                 "output_path": result.output_path,
+            },
+            ensure_ascii=False,
+        )
+    )
+    return 0
+
+
+def _smoke_google_story(
+    args: argparse.Namespace,
+    *,
+    environ: Mapping[str, str] | None = None,
+    client: GeminiStoryClient | None = None,
+    sleep: Callable[[float], None] = time.sleep,
+) -> int:
+    values = os.environ if environ is None else environ
+    topic = args.topic.strip() if isinstance(args.topic, str) else ""
+    profile = args.profile.strip() if isinstance(args.profile, str) else ""
+    if not topic:
+        raise SystemExit("Gemini story smoke topic must be nonempty")
+    if len(topic) > 500:
+        raise SystemExit("Gemini story smoke topic must be at most 500 characters")
+    if not isinstance(args.duration, int) or args.duration <= 0:
+        raise SystemExit("Gemini story smoke duration must be a positive integer")
+    if not profile:
+        raise SystemExit("Gemini story smoke profile must be nonempty")
+    output = Path(args.output)
+    if output.is_absolute() or ".." in output.parts or not output.parts or output.parts[0] != "tmp":
+        raise SystemExit("Smoke output must be a relative path under tmp/")
+    if output.suffix.lower() != ".json":
+        raise SystemExit("Smoke output under tmp/ must use a .json extension")
+
+    api_key = values.get("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        raise SystemExit("GEMINI_API_KEY is required for Google story smoke testing")
+    model = values.get("GEMINI_LLM_MODEL", "gemini-2.5-flash").strip()
+    if not model:
+        raise SystemExit("GEMINI_LLM_MODEL must not be empty")
+    try:
+        max_attempts = int(values.get("GEMINI_LLM_MAX_ATTEMPTS", "3"))
+        temperature = float(values.get("GEMINI_LLM_TEMPERATURE", "0.7"))
+        provider = GeminiStoryProvider(
+            api_key=api_key,
+            model=model,
+            max_attempts=max_attempts,
+            temperature=temperature,
+            client=client,
+            sleep=sleep,
+        )
+        story = provider.generate_story(topic, args.duration, "th", profile, 1)
+        validate_story_content(story)
+        output_path = output.as_posix()
+        ArtifactStore(_repository_root()).publish_bytes_set(
+            {
+                output_path: (json.dumps(story, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+            }
+        )
+    except (ValueError, ProviderError) as error:
+        raise SystemExit(str(error)) from error
+
+    print(
+        json.dumps(
+            {
+                "model": provider.model,
+                "scene_count": len(story["scenes"]),
+                "script_characters": len(story["script"]),
+                "output_path": output.as_posix(),
             },
             ensure_ascii=False,
         )
@@ -335,7 +421,9 @@ def _repository_root() -> Path:
     return Path(__file__).resolve().parents[5]
 
 
-def _build_pipeline_runner(args: argparse.Namespace) -> PipelineRunner:
+def _build_pipeline_runner(
+    args: argparse.Namespace, *, configure_content: bool = False
+) -> PipelineRunner:
     repository = ProjectRepository(Path(args.projects_dir))
     checkpoints = CheckpointRepository(Path(args.checkpoint_db))
     repository_root = _repository_root()
@@ -346,6 +434,7 @@ def _build_pipeline_runner(args: argparse.Namespace) -> PipelineRunner:
         checkpoint is not None and checkpoint.state.get("script_approved") is True
     )
     store = ArtifactStore(project_dir)
+    content_provider = build_story_provider(store, os.environ) if configure_content else None
     image_provider = (
         build_image_provider(store, os.environ) if needs_external_media else None
     )
@@ -355,6 +444,7 @@ def _build_pipeline_runner(args: argparse.Namespace) -> PipelineRunner:
     return PipelineRunner(
         repository,
         checkpoints,
+        content_provider=content_provider,
         renderer=renderer,
         video_probe=partial(ffprobe_duration, repository_root=repository_root),
         image_provider=image_provider,

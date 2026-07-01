@@ -157,6 +157,58 @@ class LocalContentPipelineTests(unittest.TestCase):
             {key: second_result[key] for key in content_keys},
         )
 
+    def test_pipeline_records_content_provider_metadata(self):
+        class NamedProvider:
+            provider = "google"
+            model = "gemini-2.5-flash"
+
+            def generate_story(self, *args):
+                return {
+                    "outline": {"title": "Story", "beats": ["Beat 1", "Beat 2", "Beat 3"]},
+                    "script": "ฉากหนึ่ง\n\nฉากสอง\n\nฉากสาม",
+                    "scenes": [
+                        {
+                            "scene_id": "scene_001",
+                            "title": "Beat 1",
+                            "narration": "ฉากหนึ่ง",
+                            "prompt": "prompt one",
+                            "motion": "slow_push",
+                            "focal_point": [0.5, 0.5],
+                        },
+                        {
+                            "scene_id": "scene_002",
+                            "title": "Beat 2",
+                            "narration": "ฉากสอง",
+                            "prompt": "prompt two",
+                            "motion": "slow_push",
+                            "focal_point": [0.5, 0.5],
+                        },
+                        {
+                            "scene_id": "scene_003",
+                            "title": "Beat 3",
+                            "narration": "ฉากสาม",
+                            "prompt": "prompt three",
+                            "motion": "slow_push",
+                            "focal_point": [0.5, 0.5],
+                        },
+                    ],
+                }
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = ArtifactStore(Path(temp_dir) / "project_001")
+            state = {
+                "project_id": "project_001",
+                "topic": "Story",
+                "target_duration_seconds": 30,
+                "target_language": "th",
+                "channel_style_profile": "simple_story_th",
+            }
+
+            result = ContentPipeline(store, NamedProvider()).generate(state)
+
+            self.assertEqual(result["content_provider"], "google")
+            self.assertEqual(result["content_model"], "gemini-2.5-flash")
+
 
 if __name__ == "__main__":
     unittest.main()

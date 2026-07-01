@@ -6,6 +6,66 @@ from unittest.mock import patch
 
 
 class ProviderConfigTests(unittest.TestCase):
+    def test_story_provider_defaults_to_local_and_google_is_validated(self):
+        from app.providers.local import LocalLLMProvider
+        from app.services.artifacts import ArtifactStore
+        from app.services.config import build_story_provider
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = ArtifactStore(temp_dir)
+            self.assertIsInstance(build_story_provider(store, {}), LocalLLMProvider)
+            self.assertIsInstance(
+                build_story_provider(store, {"LLM_PROVIDER": " local "}),
+                LocalLLMProvider,
+            )
+
+            client = object()
+            with patch(
+                "app.services.config.GoogleGenAIStoryClient", return_value=client
+            ) as client_type:
+                provider = build_story_provider(
+                    store,
+                    {
+                        "LLM_PROVIDER": "google",
+                        "GEMINI_API_KEY": "configured-secret",
+                        "GEMINI_LLM_MODEL": "gemini-2.5-flash",
+                        "GEMINI_LLM_MAX_ATTEMPTS": "4",
+                        "GEMINI_LLM_TEMPERATURE": "0.5",
+                    },
+                )
+            self.assertEqual(
+                (provider.provider, provider.model, provider.max_attempts, provider.temperature),
+                ("google", "gemini-2.5-flash", 4, 0.5),
+            )
+            self.assertIs(provider.client, client)
+            client_type.assert_called_once_with("configured-secret")
+
+    def test_story_provider_configuration_errors_are_sanitized(self):
+        from app.providers.base import PermanentProviderError
+        from app.services.artifacts import ArtifactStore
+        from app.services.config import build_story_provider
+
+        secret = "configured-secret"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = ArtifactStore(temp_dir)
+            invalid = (
+                {"LLM_PROVIDER": "unknown", "GEMINI_API_KEY": secret},
+                {"LLM_PROVIDER": "google", "GEMINI_API_KEY": ""},
+                {"LLM_PROVIDER": "google", "GEMINI_API_KEY": secret, "GEMINI_LLM_MODEL": ""},
+                {"LLM_PROVIDER": "google", "GEMINI_API_KEY": secret, "GEMINI_LLM_MAX_ATTEMPTS": "bad"},
+                {"LLM_PROVIDER": "google", "GEMINI_API_KEY": secret, "GEMINI_LLM_MAX_ATTEMPTS": "0"},
+                {"LLM_PROVIDER": "google", "GEMINI_API_KEY": secret, "GEMINI_LLM_MAX_ATTEMPTS": "6"},
+                {"LLM_PROVIDER": "google", "GEMINI_API_KEY": secret, "GEMINI_LLM_TEMPERATURE": "bad"},
+                {"LLM_PROVIDER": "google", "GEMINI_API_KEY": secret, "GEMINI_LLM_TEMPERATURE": "3"},
+            )
+            for environ in invalid:
+                with self.subTest(environ=environ):
+                    with patch("app.services.config.GoogleGenAIStoryClient") as client_type:
+                        with self.assertRaises((PermanentProviderError, ValueError)) as raised:
+                            build_story_provider(store, environ)
+                    self.assertNotIn(secret, str(raised.exception))
+                    client_type.assert_not_called()
+
     def test_local_image_provider_is_default_and_can_be_explicit(self):
         from app.providers.local import LocalImageProvider
         from app.services.artifacts import ArtifactStore

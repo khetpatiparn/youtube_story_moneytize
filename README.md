@@ -1,6 +1,6 @@
 # YouTube Story Automation
 
-POC for a recoverable YouTube story automation workflow. The deterministic local path runs end to end without credentials, while intentional approved runs can use Cloudflare Workers AI for scene images and Gemini for natural Thai narration.
+POC for a recoverable YouTube story automation workflow. The deterministic local path runs end to end without credentials, while intentional approved runs can use Gemini for Thai story generation and narration plus Cloudflare Workers AI for scene images.
 
 ## Current Orchestrator Commands
 
@@ -15,6 +15,7 @@ python -m app approve-final --project-id sample_story --approved --reviewer huma
 python -m app resume --project-id sample_story --checkpoint-db ./data/checkpoints.sqlite
 python -m app status --project-id sample_story
 python -m app report --project-id project_001 --video-path render/story.mp4 --quality-score 0.91 --issue "No final approval yet"
+python -m app smoke-google-story --topic "วิญญาณแม่น้ำผู้พิทักษ์หมู่บ้าน" --duration 30 --profile simple_story_th --output tmp/gemini-story-smoke.json
 ```
 
 The first `run` stops at script approval. The first `resume` after approval generates images and narration, renders the MP4, validates it, writes reports, and stops at final approval. The last `resume` changes the project to `completed`. Use `--tts-words-per-second 1000` on `resume` only for a fast one-second smoke render; the normal default is `2.5`.
@@ -22,6 +23,19 @@ The first `run` stops at script approval. The first `resume` after approval gene
 Generated runtime data goes under `projects/{project_id}/`: outline and script in `content/`, scene JSON in `scenes/`, SVG or JPEG scene assets in `images/`, WAV in `audio/`, payload and MP4 in `render/`, and approvals/quality/contact/project reports in `reports/`. Checkpoint data goes under `data/`.
 
 Resume is idempotent. Completed images, audio, renders, and reports are fingerprinted or validated before reuse. A failed render remains at `render_ready`; fix the cause and run `resume` again. Image retry is limited to three total attempts per failed scene by default (`--max-image-attempts` changes the bound).
+
+## Gemini Story Provider
+
+Copy `.env.example` to ignored `.env`, set `GEMINI_API_KEY`, and choose `LLM_PROVIDER=google` for intentional live story generation. The default model is `gemini-2.5-flash`; `GEMINI_LLM_MAX_ATTEMPTS` defaults to `3` and `GEMINI_LLM_TEMPERATURE` defaults to `0.7`.
+
+```powershell
+$env:PYTHONPATH='apps/orchestrator/src'
+python -m app smoke-google-story --topic "วิญญาณแม่น้ำผู้พิทักษ์หมู่บ้าน" --duration 30 --profile simple_story_th --output tmp/gemini-story-smoke.json
+```
+
+The story provider makes one structured Gemini request per script version and returns only `story_title` plus scene `title`, `narration`, and `image_prompt`. The application assigns scene IDs, motion, focal points, outline beats, and the joined script deterministically before publishing artifacts. Fresh `run` uses the configured story provider; `create`, `status`, approvals, reporting, and `resume` of an existing checkpoint do not call Gemini for story content.
+
+Story smoke output is restricted to a relative `.json` path under repository `tmp/` and stdout prints only `model`, `scene_count`, `script_characters`, and `output_path`. No automatic local fallback occurs after a Google failure. Default tests must keep `LLM_PROVIDER=local`, `IMAGE_PROVIDER=local`, and `TTS_PROVIDER=local`.
 
 ## Cloudflare AI Scene Images
 
@@ -67,10 +81,10 @@ Gemini TTS is a Preview model: availability, model names, quality, and Free Tier
 
 ## Local Provider Limitations
 
-- Story content is deterministic template output, not a production LLM response.
+- Local story content is deterministic template output. Intentional live runs can switch to Gemini structured story generation.
 - Local images are deterministic SVG review assets. Cloudflare images are AI-generated but provide only prompt-based, not reference-image-enforced, character continuity.
 - Local narration is synthetic tones; Gemini Thai narration is available only for intentional credentialed runs.
-- The external story-content LLM adapter still requires implementation; image and TTS adapters require credentials and provider quota.
+- Gemini story generation, Cloudflare images, and Gemini TTS all require credentials and provider quota for live runs.
 - YouTube upload, publishing, analytics, and fully autonomous operation are not implemented.
 
 ## Current Renderer Commands
