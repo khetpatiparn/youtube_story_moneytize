@@ -94,6 +94,7 @@ h2 {
 
 .workspace {
   padding: 24px;
+  min-width: 0;
 }
 
 .workspace-header {
@@ -129,10 +130,36 @@ h2 {
   font-size: 34px;
 }
 
-.content-grid {
+.content-grid,
+.control-room-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 320px;
   gap: 18px;
+}
+
+.control-room-main {
+  min-width: 0;
+}
+
+.queue-rail {
+  min-width: 0;
+}
+
+.project-queue-list {
+  display: grid;
+  gap: 10px;
+}
+
+.project-queue-list .project-item {
+  margin-bottom: 0;
+}
+
+.project-item-title {
+  overflow-wrap: anywhere;
+}
+
+.control-rail {
+  min-width: 0;
 }
 
 .panel {
@@ -255,7 +282,8 @@ h2 {
 
 @media (max-width: 900px) {
   .app-shell,
-  .content-grid {
+  .content-grid,
+  .control-room-grid {
     grid-template-columns: 1fr;
   }
 

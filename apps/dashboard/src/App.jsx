@@ -2,7 +2,10 @@ import React, {useEffect, useMemo, useState} from "react";
 import {QueryClient, QueryClientProvider, useMutation, useQuery, useQueryClient} from "@tanstack/react-query";
 
 import {EmptyProjectsState} from "./components/EmptyProjectsState.jsx";
+import {ControlRail} from "./components/ControlRail.jsx";
+import {DashboardShell} from "./components/DashboardShell.jsx";
 import {ProjectCreateForm} from "./components/ProjectCreateForm.jsx";
+import {ProjectQueuePanel} from "./components/ProjectQueuePanel.jsx";
 import {ProductionMonitor} from "./components/ProductionMonitor.jsx";
 import {SettingsPanel} from "./components/SettingsPanel.jsx";
 import {ScriptReview} from "./components/ScriptReview.jsx";
@@ -363,29 +366,15 @@ function DashboardApp() {
   }
 
   return (
-    <main className="app-shell">
-      <aside className="sidebar">
-        <div className="brand">
-          <span>Media QA</span>
-          <strong>YouTube Story Automation</strong>
-        </div>
-        <section>
-          <h2>Project Queue</h2>
-          {projects.map((project) => (
-            <button
-              className={project.projectId === selectedProject.projectId ? "project-item active" : "project-item"}
-              key={project.projectId}
-              onClick={() => setSelectedProjectId(project.projectId)}
-              type="button"
-            >
-              <span>{project.projectId}</span>
-              <small>{project.status}</small>
-            </button>
-          ))}
-        </section>
-      </aside>
-
-      <section className="workspace">
+    <DashboardShell
+      queue={(
+        <ProjectQueuePanel
+          onSelect={setSelectedProjectId}
+          projects={projects}
+          selectedProjectId={selectedProject.projectId}
+        />
+      )}
+      header={(
         <header className="workspace-header">
           <div>
             <p className="eyebrow">{modeLabel(mode, selectedProject.source)}</p>
@@ -400,8 +389,8 @@ function DashboardApp() {
             <strong>{formatScore(selectedProject.quality?.score)}</strong>
           </div>
         </header>
-
-        <div className="content-grid">
+      )}
+      main={(
           <ScriptReview
             busy={saveScriptMutation.isPending || approveScriptMutation.isPending}
             project={selectedProject}
@@ -413,15 +402,18 @@ function DashboardApp() {
               saveScriptMutation.mutate({projectId: selectedProject.projectId, revision, scenes})
             }
           />
-
-          <aside className="right-rail">
+      )}
+      rail={(
+          <ControlRail
+            monitor={(
             <ProductionMonitor
               actionState={actionState}
               job={activeJob}
               jobs={jobsQuery.data?.jobs ?? []}
               project={selectedProject}
             />
-
+            )}
+            projectManagement={(
             <ProjectCreateForm
               busy={
                 actionState.running ||
@@ -437,7 +429,8 @@ function DashboardApp() {
               selectedProjectId={selectedProject?.projectId}
               value={projectForm}
             />
-
+            )}
+            settings={(
             <SettingsPanel
               busy={saveSettingsMutation.isPending || testProviderMutation.isPending}
               error={settingsError}
@@ -446,7 +439,8 @@ function DashboardApp() {
               onTest={handleTestProvider}
               value={settingsForm}
             />
-
+            )}
+            controls={(
             <section className="panel">
               <h2>Control Panel</h2>
               <div className="action-stack">
@@ -473,7 +467,8 @@ function DashboardApp() {
                 {availableActions.length === 0 ? <p className="muted">No actions available for this state.</p> : null}
               </div>
             </section>
-
+            )}
+            quality={(
             <section className="panel">
               <h2>Quality Report</h2>
               <p className="video-path">{selectedProject.quality?.videoPath ?? "No render path yet"}</p>
@@ -485,23 +480,25 @@ function DashboardApp() {
                 )}
               </ul>
             </section>
-
+            )}
+            approvals={(
             <section className="panel">
               <h2>Approval Summary</h2>
               <ApprovalRow label="Script" value={selectedProject.approvals?.script} />
               <ApprovalRow label="Final" value={selectedProject.approvals?.final} />
             </section>
-
+            )}
+            reports={(
             <section className="panel">
               <h2>Reports</h2>
               <ReportPath label="Contact sheet" value={selectedProject.reports?.contactSheetPath} />
               <ReportPath label="Project report" value={selectedProject.reports?.projectReportPath} />
               <ReportPath label="Quality JSON" value={selectedProject.reports?.qualityReportPath} />
             </section>
-          </aside>
-        </div>
-      </section>
-    </main>
+            )}
+          />
+      )}
+    />
   );
 }
 
