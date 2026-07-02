@@ -6,7 +6,7 @@ This repo contains `youtube_story_automation_poc_plan.md`, Python orchestrator, 
 - `apps/orchestrator/src/` for graph, nodes, schemas, providers, services, repositories, and CLI.
 - `apps/orchestrator/tests/` for Python tests.
 - `apps/renderer/src/` for Remotion compositions, components, motions, and `index.tsx`.
-- `apps/dashboard/` for the local read-only Media QA web dashboard.
+- `apps/dashboard/` for the local browser-first Production Control Room.
 - `configs/` for prompts, channel profiles, and render profiles.
 - `projects/{project_id}/` for generated assets, approvals, reports, logs, and renders.
 - `data/` for checkpoints and caches.
@@ -64,6 +64,6 @@ Gemini story generation uses one structured response per script version, retries
 
 Cloudflare image runs publish one validated JPEG per scene, accept dimensions from 512 through 4096 pixels per side, and retry only transient failures with a finite bound. They have no automatic paid or local fallback. Cloudflare smoke outputs must remain relative `.jpg` paths under repository `tmp/`. Never log account IDs, API tokens, prompts, response bodies, or provider error bodies.
 
-The dashboard control slice may run `run`, `resume`, `approve-script`, and `approve-final` for existing local projects, and it now also supports local project creation plus encrypted provider/config editing through the browser. Do not add uploads or remote/published control paths without a new goal and tests.
+The dashboard control slice may run, resume, cancel active jobs, edit/approve scripts, and record final review for local projects. It also supports local project creation plus encrypted provider/config editing through the browser. Live API empty state must remain truthful; offline sample fallback is allowed only when the API is unavailable. Do not add uploads or remote/published control paths without a new goal and tests.
 
 Local content, SVG image, and tone-WAV providers are deterministic POC adapters. Gemini TTS is Preview and Cloudflare Flux continuity is prompt-only; neither proves production capacity. YouTube upload remains out of scope.

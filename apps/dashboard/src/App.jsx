@@ -586,7 +586,7 @@ function modeLabel(mode, source) {
     return "Static export";
   }
   if (source === "demo" || mode === "demo") {
-    return "Demo data";
+    return "Offline sample";
   }
   return "Loading";
 }

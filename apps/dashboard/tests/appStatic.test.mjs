@@ -52,3 +52,11 @@ test("dashboard app uses a secondary script workspace with active-job cancellati
   assert.match(appSource, /ScriptWorkspaceDrawer/);
   assert.match(appSource, /cancelJob/);
 });
+
+test("dashboard source preserves control room semantics and avoids demo-first labeling", async () => {
+  const appSource = await readFile("apps/dashboard/src/App.jsx", "utf8");
+  const liveSource = await readFile("apps/dashboard/src/components/LiveProductionPanel.jsx", "utf8");
+
+  assert.match(`${appSource}\n${liveSource}`, /Production Control Room|Live Production/);
+  assert.doesNotMatch(appSource, /Demo data/);
+});

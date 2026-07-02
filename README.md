@@ -106,7 +106,7 @@ npm.cmd run dev:dashboard
 npm.cmd run build:dashboard
 ```
 
-The Media QA dashboard lives in `apps/dashboard/`. The data export step reads local project data from `projects/{project_id}/` when available and writes `apps/dashboard/public/dashboard-data.json`; when no generated projects exist it writes bundled demo data.
+The browser-first Production Control Room lives in `apps/dashboard/`. Its queue rail selects a project, the main panel shows live stage/scene progress and recent events, the control rail exposes valid actions, and the script workspace stays secondary until review is needed. The data export step reads local project data from `projects/{project_id}/` when available and writes `apps/dashboard/public/dashboard-data.json`; when no generated projects exist it writes bundled offline sample data.
 
 For live local controls, run the API and dashboard in two terminals:
 
@@ -119,7 +119,7 @@ python -m app dashboard-api --host 127.0.0.1 --port 8000
 npm.cmd run dev:dashboard
 ```
 
-`dev:dashboard` proxies `/api` to `http://127.0.0.1:8000`. When the API is available, the dashboard reads live project state and can trigger `run`, `resume`, `approve-script`, and `approve-final` for existing projects. When the API is unavailable, the UI falls back to `dashboard-data.json` or bundled demo data.
+`dev:dashboard` proxies `/api` to `http://127.0.0.1:8000`. When the API is available, the dashboard reads live project state, polls active jobs and project events, and can trigger `run`, `resume`, job cancellation, script review, and final approval. A valid empty live response stays empty and opens the project creation workflow; sample data is used only when the API itself is unavailable.
 
 The browser control layer is local-only and now supports local project creation plus encrypted provider settings. It does not publish to YouTube.
 
