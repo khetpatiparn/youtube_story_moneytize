@@ -9,9 +9,9 @@ import {ProjectCreateForm} from "./components/ProjectCreateForm.jsx";
 import {ProjectQueuePanel} from "./components/ProjectQueuePanel.jsx";
 import {ProductionMonitor} from "./components/ProductionMonitor.jsx";
 import {SettingsPanel} from "./components/SettingsPanel.jsx";
-import {ScriptReview} from "./components/ScriptReview.jsx";
+import {ScriptWorkspaceDrawer} from "./components/ScriptWorkspaceDrawer.jsx";
 import {loadProjectEvents} from "./data/eventRequests.js";
-import {loadJobs, runProjectJob} from "./data/jobRequests.js";
+import {cancelJob, loadJobs, runProjectJob} from "./data/jobRequests.js";
 import {loadDashboardProjectsFromApi} from "./data/loadApiProjects.js";
 import {copyProject, createProject, deleteProject} from "./data/projectRequests.js";
 import {loadSettings, saveSettings, testProviderSettings} from "./data/settingsRequests.js";
@@ -172,6 +172,21 @@ function DashboardApp() {
       setActionState({
         running: false,
         error: error instanceof Error ? error.message : "Action failed.",
+        message: "",
+      }),
+  });
+
+  const cancelJobMutation = useMutation({
+    mutationFn: (jobId) => cancelJob(fetch, jobId),
+    onMutate: () => setActionState({running: true, error: "", message: ""}),
+    onSuccess: async () => {
+      await invalidateProjectData(queryClient, selectedProject?.projectId);
+      setActionState({running: false, error: "", message: "Cancellation requested."});
+    },
+    onError: (error) =>
+      setActionState({
+        running: false,
+        error: error instanceof Error ? error.message : "Cancellation failed.",
         message: "",
       }),
   });
@@ -407,19 +422,18 @@ function DashboardApp() {
         />
       )}
       workspace={(
-        <div className="secondary-workspace">
-          <ScriptReview
-            busy={saveScriptMutation.isPending || approveScriptMutation.isPending}
-            project={selectedProject}
-            scriptData={scriptQuery.data}
-            onApprove={(revision, approved) =>
-              approveScriptMutation.mutate({projectId: selectedProject.projectId, revision, approved})
-            }
-            onSave={(revision, scenes) =>
-              saveScriptMutation.mutate({projectId: selectedProject.projectId, revision, scenes})
-            }
-          />
-        </div>
+        <ScriptWorkspaceDrawer
+          busy={saveScriptMutation.isPending || approveScriptMutation.isPending}
+          defaultOpen={selectedProject.waitingFor === "script"}
+          project={selectedProject}
+          scriptData={scriptQuery.data}
+          onApprove={(revision, approved) =>
+            approveScriptMutation.mutate({projectId: selectedProject.projectId, revision, approved})
+          }
+          onSave={(revision, scenes) =>
+            saveScriptMutation.mutate({projectId: selectedProject.projectId, revision, scenes})
+          }
+        />
       )}
       rail={(
           <ControlRail
@@ -472,7 +486,7 @@ function DashboardApp() {
                     Run
                   </button>
                 ) : null}
-                {availableActions.includes("resume") ? (
+                    {availableActions.includes("resume") ? (
                   <button
                     className="action-button primary"
                     disabled={actionState.running || runJobMutation.isPending}
@@ -481,9 +495,22 @@ function DashboardApp() {
                   >
                     Resume
                   </button>
-                ) : null}
-                {availableActions.length === 0 ? <p className="muted">No actions available for this state.</p> : null}
-              </div>
+                    ) : null}
+                    {activeJob ? (
+                      <button
+                        className="action-button danger"
+                        disabled={actionState.running || cancelJobMutation.isPending}
+                        onClick={() => cancelJobMutation.mutate(activeJob.jobId)}
+                        type="button"
+                      >
+                        Cancel active job
+                      </button>
+                    ) : null}
+                    {availableActions.length === 0 && !activeJob ? (
+                      <p className="muted">No actions available for this state.</p>
+                    ) : null}
+                    {actionState.error ? <p className="action-message error">{actionState.error}</p> : null}
+                  </div>
             </section>
             )}
             quality={(

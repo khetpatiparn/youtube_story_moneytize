@@ -246,8 +246,34 @@ h2 {
   color: #64748b;
 }
 
-.secondary-workspace {
+.secondary-workspace,
+.script-workspace {
   margin-top: 18px;
+}
+
+.script-workspace {
+  border: 1px solid #d1d9e0;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.script-workspace summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.script-workspace summary small {
+  color: #64748b;
+  font-weight: 500;
+}
+
+.script-workspace-body {
+  padding: 0 16px 16px;
 }
 
 .queue-rail {
