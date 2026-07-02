@@ -48,7 +48,7 @@ The existing Python orchestration pipeline remains the source of truth. The web 
 ### Components
 
 - **Launcher:** Starts the API and background worker, detects startup failures and port conflicts, waits for readiness, and opens the browser without leaving a terminal window in the normal path.
-- **Web dashboard:** Provides projects, script review, production monitoring, final review, and settings screens.
+- **Web dashboard:** Provides projects, script review, production monitoring, final review, and settings screens. It should prefer established client-state libraries for polling, cache, mutation, and cancellation behavior instead of hand-rolled request orchestration.
 - **Local API:** Validates requests, reads project state, accepts control commands, publishes progress, and serves validated local media.
 - **Job worker:** Executes durable jobs independently of browser connections and serializes state-changing commands per project.
 - **Existing pipeline:** Owns content, image, TTS, timeline, checkpoint, approval, report, and render behavior.
@@ -73,7 +73,7 @@ If an approved script is edited later, the application identifies affected scene
 
 The production screen shows overall stage progress and per-scene states such as queued, generating image, generating narration, ready, failed, or cancelled. Each scene exposes its script excerpt, image prompt, image preview, audio preview, attempt count, and sanitized error summary.
 
-Progress updates automatically. The initial implementation may use short polling behind a stable progress interface; the API can later switch to server-sent events without changing pipeline state contracts.
+Progress updates automatically. The initial implementation should use a standard client-state library such as TanStack Query for short polling, cache invalidation, mutation lifecycles, and cancellation wiring behind a stable progress interface; the API can later switch to server-sent events without changing pipeline state contracts.
 
 ### Final Review
 
@@ -92,6 +92,8 @@ State-changing endpoints return a durable job identifier rather than holding the
 Only one state-changing job may run per project. Duplicate requests are rejected deterministically. Read operations remain available while a job is running.
 
 The pipeline writes checkpoints and artifacts atomically where supported. The API derives displayed state from durable project state rather than browser memory.
+
+For local-first delivery, the durable job layer stays in-process and SQLite-backed rather than adopting an external queue such as Celery or Redis-backed workers. That keeps installation browser-first, free, and one-machine-only without adding broker setup.
 
 ## Asset Invalidation
 

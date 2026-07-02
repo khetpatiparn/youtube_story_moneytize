@@ -4,9 +4,9 @@
 
 **Goal:** Run script generation as a durable background job, edit and approve the script in the browser, and monitor per-stage and per-scene production with cancel, retry, and resume.
 
-**Architecture:** Introduce a SQLite-backed job repository and one in-process worker queue. API mutations enqueue jobs and return `202` immediately; browser polling reads durable status. Pipeline callbacks publish sanitized stage and scene progress without changing provider contracts.
+**Architecture:** Introduce a SQLite-backed job repository and one in-process worker queue. API mutations enqueue jobs and return `202` immediately; browser polling reads durable status through a standard query/state library rather than handwritten polling state. Pipeline callbacks publish sanitized stage and scene progress without changing provider contracts.
 
-**Tech Stack:** Python `sqlite3`, `threading`, existing checkpoint pipeline, React 19, Node test runner.
+**Tech Stack:** Python `sqlite3`, `threading`, existing checkpoint pipeline, React 19, TanStack Query, Node test runner.
 
 ---
 
@@ -92,6 +92,8 @@ def process_one(self) -> bool:
 ```
 
 Run a daemon worker thread with an event wake-up and a one-second idle wait. On startup, change orphaned `running` jobs to `failed` with code `application_restarted`; the UI offers resume. Cancellation is cooperative through a callback checked between pipeline nodes and scene attempts.
+
+Do not introduce Celery, Redis, or another external queue for this slice. The local browser-first requirement favors a zero-extra-infra worker that starts with the existing launcher.
 
 - [ ] **Step 4: Run worker tests**
 
@@ -242,7 +244,7 @@ Run: `npm.cmd run test:dashboard`
 
 - [ ] **Step 3: Implement script and monitor views**
 
-Use `AbortController` and `setTimeout` recursion rather than overlapping `setInterval` calls. Show stage, percent, scene status, prompt, narration, image/audio paths, attempts, sanitized error, Cancel, Retry, and Resume. Disable edits during active jobs. Refresh project and script after terminal job state.
+Use TanStack Query for polling, cache invalidation, and mutation lifecycle management, with `AbortController` for request cancellation. Poll no faster than once per second and avoid overlapping requests. Show stage, percent, scene status, prompt, narration, image/audio paths, attempts, sanitized error, Cancel, Retry, and Resume. Disable edits during active jobs. Refresh project and script after terminal job state.
 
 - [ ] **Step 4: Run dashboard tests and build**
 
