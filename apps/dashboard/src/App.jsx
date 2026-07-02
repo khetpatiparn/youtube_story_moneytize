@@ -1,11 +1,15 @@
-import React, {useEffect, useState} from "react";
+import React, {useEffect, useMemo, useState} from "react";
+import {QueryClient, QueryClientProvider, useMutation, useQuery, useQueryClient} from "@tanstack/react-query";
 
 import {ProjectCreateForm} from "./components/ProjectCreateForm.jsx";
+import {ProductionMonitor} from "./components/ProductionMonitor.jsx";
 import {SettingsPanel} from "./components/SettingsPanel.jsx";
-import {submitProjectAction} from "./data/actionRequests.js";
+import {ScriptReview} from "./components/ScriptReview.jsx";
+import {loadJobs, runProjectJob} from "./data/jobRequests.js";
 import {loadDashboardProjectsFromApi} from "./data/loadApiProjects.js";
 import {copyProject, createProject, deleteProject} from "./data/projectRequests.js";
 import {loadSettings, saveSettings, testProviderSettings} from "./data/settingsRequests.js";
+import {approveScriptRevision, loadProjectScript, saveProjectScript} from "./data/scriptRequests.js";
 import {sampleProject} from "./data/sampleProject.js";
 
 const statusLabels = {
@@ -35,87 +39,221 @@ const initialSettingsForm = {
   cloudflare_api_token_status: {configured: false, suffix: null},
 };
 
+const queryClient = new QueryClient();
+
 export function App() {
-  const [projects, setProjects] = useState([]);
+  return (
+    <QueryClientProvider client={queryClient}>
+      <DashboardApp />
+    </QueryClientProvider>
+  );
+}
+
+function DashboardApp() {
+  const queryClient = useQueryClient();
   const [selectedProjectId, setSelectedProjectId] = useState(null);
-  const [mode, setMode] = useState("loading");
-  const [actionState, setActionState] = useState({running: false, error: "", message: ""});
   const [projectForm, setProjectForm] = useState(initialProjectForm);
   const [projectFormError, setProjectFormError] = useState("");
   const [settingsForm, setSettingsForm] = useState(initialSettingsForm);
-  const [settingsBusy, setSettingsBusy] = useState(false);
   const [settingsError, setSettingsError] = useState("");
+  const [actionState, setActionState] = useState({running: false, error: "", message: ""});
+
+  const projectsQuery = useQuery({
+    queryKey: ["projects"],
+    queryFn: async () => {
+      try {
+        const payload = await loadDashboardProjectsFromApi(fetch);
+        if (payload.projects.length > 0) {
+          return {projects: payload.projects, mode: "api"};
+        }
+        throw new Error("api returned no projects");
+      } catch {
+        try {
+          const response = await fetch("/dashboard-data.json");
+          if (!response.ok) {
+            throw new Error(`dashboard data returned ${response.status}`);
+          }
+          const payload = await response.json();
+          const projects = Array.isArray(payload.projects) ? payload.projects : [sampleProject];
+          return {projects, mode: projects[0]?.source === "demo" ? "demo" : "static"};
+        } catch {
+          return {projects: [sampleProject], mode: "demo"};
+        }
+      }
+    },
+  });
+
+  const settingsQuery = useQuery({
+    queryKey: ["settings"],
+    queryFn: async () => mapSettingsPayload(await loadSettings(fetch)),
+  });
+
+  const projects = projectsQuery.data?.projects ?? [];
+  const mode = projectsQuery.data?.mode ?? "loading";
 
   useEffect(() => {
-    initializeProjects();
-    initializeSettings();
-  }, []);
+    if (projects.length === 0) {
+      setSelectedProjectId(null);
+      return;
+    }
+    setSelectedProjectId((currentProjectId) =>
+      projects.some((project) => project.projectId === currentProjectId)
+        ? currentProjectId
+        : (projects[0]?.projectId ?? null),
+    );
+  }, [projects]);
 
-  const selectedProject =
-    projects.find((project) => project.projectId === selectedProjectId) ?? projects[0];
-  const availableActions = Array.isArray(selectedProject?.availableActions)
-    ? selectedProject.availableActions
-    : [];
+  useEffect(() => {
+    if (settingsQuery.data) {
+      setSettingsForm(settingsQuery.data);
+    }
+  }, [settingsQuery.data]);
+
+  const selectedProject = projects.find((project) => project.projectId === selectedProjectId) ?? projects[0] ?? null;
+  const availableActions = Array.isArray(selectedProject?.availableActions) ? selectedProject.availableActions : [];
+
+  const jobsQuery = useQuery({
+    queryKey: ["jobs", selectedProject?.projectId],
+    queryFn: async () => {
+      if (!selectedProject?.projectId) {
+        return {jobs: []};
+      }
+      return loadJobs(fetch, selectedProject.projectId);
+    },
+    enabled: Boolean(selectedProject?.projectId) && mode === "api",
+    refetchInterval: (query) => hasActiveJob(query.state.data?.jobs ?? []) ? 2000 : false,
+  });
+
+  const scriptQuery = useQuery({
+    queryKey: ["script", selectedProject?.projectId],
+    queryFn: async () => {
+      if (!selectedProject?.projectId) {
+        return {revision: null, scenes: []};
+      }
+      return loadProjectScript(fetch, selectedProject.projectId);
+    },
+    enabled: Boolean(selectedProject?.projectId) && mode === "api",
+  });
+
+  const activeJob = useMemo(() => {
+    const jobs = jobsQuery.data?.jobs ?? [];
+    return jobs.find((job) => ["queued", "running", "cancelling"].includes(job.status)) ?? null;
+  }, [jobsQuery.data]);
+
+  const runJobMutation = useMutation({
+    mutationFn: ({projectId, operation}) => runProjectJob(fetch, projectId, operation),
+    onMutate: () => setActionState({running: true, error: "", message: ""}),
+    onSuccess: async (payload) => {
+      await invalidateProjectData(queryClient, selectedProject?.projectId);
+      setActionState({
+        running: false,
+        error: "",
+        message: payload.job ? `Queued ${payload.job.operation} job ${payload.job.jobId}.` : "Action completed.",
+      });
+    },
+    onError: (error) =>
+      setActionState({
+        running: false,
+        error: error instanceof Error ? error.message : "Action failed.",
+        message: "",
+      }),
+  });
+
+  const createProjectMutation = useMutation({
+    mutationFn: (payload) => createProject(fetch, payload),
+    onSuccess: async (created) => {
+      await queryClient.invalidateQueries({queryKey: ["projects"]});
+      setSelectedProjectId(created.projectId);
+      setProjectForm(initialProjectForm);
+      setProjectFormError("");
+    },
+    onError: (error) =>
+      setProjectFormError(error instanceof Error ? error.message : "Project creation failed."),
+  });
+
+  const copyProjectMutation = useMutation({
+    mutationFn: (projectId) => copyProject(fetch, projectId),
+    onSuccess: async (copied) => {
+      await queryClient.invalidateQueries({queryKey: ["projects"]});
+      setSelectedProjectId(copied.projectId);
+      setProjectFormError("");
+    },
+    onError: (error) =>
+      setProjectFormError(error instanceof Error ? error.message : "Project copy failed."),
+  });
+
+  const deleteProjectMutation = useMutation({
+    mutationFn: ({projectId, confirmProjectId}) => deleteProject(fetch, projectId, confirmProjectId),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({queryKey: ["projects"]});
+      setProjectForm((current) => ({...current, deleteConfirmation: ""}));
+      setProjectFormError("");
+    },
+    onError: (error) =>
+      setProjectFormError(error instanceof Error ? error.message : "Project delete failed."),
+  });
+
+  const saveSettingsMutation = useMutation({
+    mutationFn: (payload) => saveSettings(fetch, payload),
+    onSuccess: async (saved) => {
+      const mapped = {
+        ...mapSettingsPayload(saved),
+        gemini_api_key: "",
+        cloudflare_account_id: "",
+        cloudflare_api_token: "",
+      };
+      queryClient.setQueryData(["settings"], mapped);
+      setSettingsForm(mapped);
+      setSettingsError("");
+    },
+    onError: (error) =>
+      setSettingsError(error instanceof Error ? error.message : "Settings save failed."),
+  });
+
+  const testProviderMutation = useMutation({
+    mutationFn: (provider) => testProviderSettings(fetch, provider),
+    onSuccess: () => setSettingsError(""),
+    onError: (error) =>
+      setSettingsError(error instanceof Error ? error.message : "Provider test failed."),
+  });
+
+  const saveScriptMutation = useMutation({
+    mutationFn: ({projectId, revision, scenes}) => saveProjectScript(fetch, projectId, revision, scenes),
+    onMutate: () => setActionState({running: true, error: "", message: ""}),
+    onSuccess: async (payload) => {
+      if (!selectedProject?.projectId) {
+        return;
+      }
+      queryClient.setQueryData(["script", selectedProject.projectId], payload);
+      await queryClient.invalidateQueries({queryKey: ["projects"]});
+      setActionState({running: false, error: "", message: "Script saved."});
+    },
+    onError: (error) =>
+      setActionState({
+        running: false,
+        error: error instanceof Error ? error.message : "Script save failed.",
+        message: "",
+      }),
+  });
+
+  const approveScriptMutation = useMutation({
+    mutationFn: ({projectId, revision, approved}) =>
+      approveScriptRevision(fetch, projectId, revision, approved, "human"),
+    onMutate: () => setActionState({running: true, error: "", message: ""}),
+    onSuccess: async (payload) => {
+      await invalidateProjectData(queryClient, selectedProject?.projectId);
+      setActionState({running: false, error: "", message: payload.message ?? "Script approval recorded."});
+    },
+    onError: (error) =>
+      setActionState({
+        running: false,
+        error: error instanceof Error ? error.message : "Script approval failed.",
+        message: "",
+      }),
+  });
 
   if (!selectedProject) {
     return <main className="app-shell empty-state">No project data available.</main>;
-  }
-
-  async function initializeProjects() {
-    try {
-      const payload = await loadDashboardProjectsFromApi(fetch);
-      if (payload.projects.length > 0) {
-        applyProjects(payload.projects);
-        setMode("api");
-        return;
-      }
-      throw new Error("api returned no projects");
-    } catch {
-      try {
-        const response = await fetch("/dashboard-data.json");
-        if (!response.ok) {
-          throw new Error(`dashboard data returned ${response.status}`);
-        }
-        const payload = await response.json();
-        const loadedProjects = Array.isArray(payload.projects) ? payload.projects : [sampleProject];
-        applyProjects(loadedProjects);
-        setMode(loadedProjects[0]?.source === "demo" ? "demo" : "static");
-      } catch {
-        applyProjects([sampleProject]);
-        setMode("demo");
-      }
-    }
-  }
-
-  async function initializeSettings() {
-    try {
-      const payload = await loadSettings(fetch);
-      setSettingsForm(mapSettingsPayload(payload));
-    } catch {
-      setSettingsForm(initialSettingsForm);
-    }
-  }
-
-  function applyProjects(nextProjects) {
-    setProjects(nextProjects);
-    setSelectedProjectId((currentProjectId) =>
-      nextProjects.some((project) => project.projectId === currentProjectId)
-        ? currentProjectId
-        : (nextProjects[0]?.projectId ?? null),
-    );
-  }
-
-  async function refreshProject(projectId) {
-    const response = await fetch(`/api/projects/${projectId}`);
-    if (!response.ok) {
-      throw new Error(`dashboard api returned ${response.status}`);
-    }
-    const refreshed = await response.json();
-    setProjects((currentProjects) =>
-      currentProjects.map((project) => (project.projectId === projectId ? refreshed : project)),
-    );
-    setMode("api");
-    return refreshed;
   }
 
   function handleProjectInputChange(event) {
@@ -134,113 +272,56 @@ export function App() {
     }));
   }
 
-  async function handleAction(action, body) {
-    if (!selectedProject) {
-      return;
-    }
-    setActionState({running: true, error: "", message: ""});
-    try {
-      const payload = await submitProjectAction(fetch, selectedProject.projectId, action, body);
-      await refreshProject(selectedProject.projectId);
-      setActionState({
-        running: false,
-        error: "",
-        message: payload.message ?? "Action completed.",
-      });
-    } catch (error) {
-      setActionState({
-        running: false,
-        error: error instanceof Error ? error.message : "Action failed.",
-        message: "",
-      });
-    }
-  }
-
   async function handleCreateProject(event) {
     event.preventDefault();
     setProjectFormError("");
-    try {
-      const created = await createProject(fetch, {
-        topic: projectForm.topic,
-        duration: projectForm.duration,
-        profile: projectForm.profile,
-        targetLanguage: projectForm.targetLanguage,
+    createProjectMutation.mutate({
+      topic: projectForm.topic,
+      duration: projectForm.duration,
+      profile: projectForm.profile,
+      targetLanguage: projectForm.targetLanguage,
+    });
+  }
+
+  function handleCopyProject() {
+    if (selectedProject?.projectId) {
+      setProjectFormError("");
+      copyProjectMutation.mutate(selectedProject.projectId);
+    }
+  }
+
+  function handleDeleteProject() {
+    if (selectedProject?.projectId) {
+      setProjectFormError("");
+      deleteProjectMutation.mutate({
+        projectId: selectedProject.projectId,
+        confirmProjectId: projectForm.deleteConfirmation,
       });
-      setProjects((current) => [created, ...current]);
-      setSelectedProjectId(created.projectId);
-      setProjectForm(initialProjectForm);
-      setMode("api");
-    } catch (error) {
-      setProjectFormError(error instanceof Error ? error.message : "Project creation failed.");
     }
   }
 
-  async function handleCopyProject() {
-    if (!selectedProject) {
-      return;
-    }
-    setProjectFormError("");
-    try {
-      const copied = await copyProject(fetch, selectedProject.projectId);
-      setProjects((current) => [copied, ...current]);
-      setSelectedProjectId(copied.projectId);
-      setMode("api");
-    } catch (error) {
-      setProjectFormError(error instanceof Error ? error.message : "Project copy failed.");
-    }
-  }
-
-  async function handleDeleteProject() {
-    if (!selectedProject) {
-      return;
-    }
-    setProjectFormError("");
-    try {
-      await deleteProject(fetch, selectedProject.projectId, projectForm.deleteConfirmation);
-      const remaining = projects.filter((project) => project.projectId !== selectedProject.projectId);
-      applyProjects(remaining.length > 0 ? remaining : [sampleProject]);
-      setProjectForm((current) => ({...current, deleteConfirmation: ""}));
-    } catch (error) {
-      setProjectFormError(error instanceof Error ? error.message : "Project delete failed.");
-    }
-  }
-
-  async function handleSaveSettings(event) {
+  function handleSaveSettings(event) {
     event.preventDefault();
-    setSettingsBusy(true);
     setSettingsError("");
-    try {
-      const saved = await saveSettings(fetch, {
-        story_provider: settingsForm.story_provider,
-        image_provider: settingsForm.image_provider,
-        projects_dir: settingsForm.projects_dir,
-        image_retry_limit: settingsForm.image_retry_limit,
-        gemini_api_key: settingsForm.gemini_api_key || undefined,
-        cloudflare_account_id: settingsForm.cloudflare_account_id || undefined,
-        cloudflare_api_token: settingsForm.cloudflare_api_token || undefined,
-      });
-      setSettingsForm((current) => ({
-        ...mapSettingsPayload(saved),
-        gemini_api_key: "",
-        cloudflare_account_id: "",
-        cloudflare_api_token: "",
-      }));
-    } catch (error) {
-      setSettingsError(error instanceof Error ? error.message : "Settings save failed.");
-    } finally {
-      setSettingsBusy(false);
-    }
+    saveSettingsMutation.mutate({
+      story_provider: settingsForm.story_provider,
+      image_provider: settingsForm.image_provider,
+      projects_dir: settingsForm.projects_dir,
+      image_retry_limit: settingsForm.image_retry_limit,
+      gemini_api_key: settingsForm.gemini_api_key || undefined,
+      cloudflare_account_id: settingsForm.cloudflare_account_id || undefined,
+      cloudflare_api_token: settingsForm.cloudflare_api_token || undefined,
+    });
   }
 
-  async function handleTestProvider(provider) {
-    setSettingsBusy(true);
+  function handleTestProvider(provider) {
     setSettingsError("");
-    try {
-      await testProviderSettings(fetch, provider);
-    } catch (error) {
-      setSettingsError(error instanceof Error ? error.message : "Provider test failed.");
-    } finally {
-      setSettingsBusy(false);
+    testProviderMutation.mutate(provider);
+  }
+
+  function handleRunOperation(operation) {
+    if (selectedProject?.projectId) {
+      runJobMutation.mutate({projectId: selectedProject.projectId, operation});
     }
   }
 
@@ -279,28 +360,38 @@ export function App() {
           </div>
           <div className="score-box">
             <span>Quality score</span>
-            <strong>{formatScore(selectedProject.quality.score)}</strong>
+            <strong>{formatScore(selectedProject.quality?.score)}</strong>
           </div>
         </header>
 
         <div className="content-grid">
-          <section className="panel scene-panel">
-            <h2>Scene Review</h2>
-            <div className="scene-grid">
-              {selectedProject.scenes.map((scene) => (
-                <article className="scene-card" key={scene.sceneId}>
-                  <div className="scene-thumb">{scene.imagePath ?? "No image"}</div>
-                  <h3>{scene.sceneId}</h3>
-                  <p>{scene.prompt || "No prompt available"}</p>
-                </article>
-              ))}
-              {selectedProject.scenes.length === 0 ? <p className="muted">No scenes are available yet.</p> : null}
-            </div>
-          </section>
+          <ScriptReview
+            busy={saveScriptMutation.isPending || approveScriptMutation.isPending}
+            project={selectedProject}
+            scriptData={scriptQuery.data}
+            onApprove={(revision, approved) =>
+              approveScriptMutation.mutate({projectId: selectedProject.projectId, revision, approved})
+            }
+            onSave={(revision, scenes) =>
+              saveScriptMutation.mutate({projectId: selectedProject.projectId, revision, scenes})
+            }
+          />
 
           <aside className="right-rail">
+            <ProductionMonitor
+              actionState={actionState}
+              job={activeJob}
+              jobs={jobsQuery.data?.jobs ?? []}
+              project={selectedProject}
+            />
+
             <ProjectCreateForm
-              busy={actionState.running}
+              busy={
+                actionState.running ||
+                createProjectMutation.isPending ||
+                copyProjectMutation.isPending ||
+                deleteProjectMutation.isPending
+              }
               error={projectFormError}
               onChange={handleProjectInputChange}
               onCopy={handleCopyProject}
@@ -311,7 +402,7 @@ export function App() {
             />
 
             <SettingsPanel
-              busy={settingsBusy}
+              busy={saveSettingsMutation.isPending || testProviderMutation.isPending}
               error={settingsError}
               onChange={handleSettingsInputChange}
               onSave={handleSaveSettings}
@@ -325,8 +416,8 @@ export function App() {
                 {availableActions.includes("run") ? (
                   <button
                     className="action-button primary"
-                    disabled={actionState.running}
-                    onClick={() => handleAction("run")}
+                    disabled={actionState.running || runJobMutation.isPending}
+                    onClick={() => handleRunOperation("run")}
                     type="button"
                   >
                     Run
@@ -335,88 +426,58 @@ export function App() {
                 {availableActions.includes("resume") ? (
                   <button
                     className="action-button primary"
-                    disabled={actionState.running}
-                    onClick={() => handleAction("resume")}
+                    disabled={actionState.running || runJobMutation.isPending}
+                    onClick={() => handleRunOperation("resume")}
                     type="button"
                   >
                     Resume
                   </button>
                 ) : null}
-                {availableActions.includes("approve_script") ? (
-                  <>
-                    <button
-                      className="action-button"
-                      disabled={actionState.running}
-                      onClick={() => handleAction("approve-script", {approved: true, reviewer: "human"})}
-                      type="button"
-                    >
-                      Approve script
-                    </button>
-                    <button
-                      className="action-button danger"
-                      disabled={actionState.running}
-                      onClick={() => handleAction("approve-script", {approved: false, reviewer: "human"})}
-                      type="button"
-                    >
-                      Request script changes
-                    </button>
-                  </>
-                ) : null}
-                {availableActions.includes("approve_final") ? (
-                  <>
-                    <button
-                      className="action-button"
-                      disabled={actionState.running}
-                      onClick={() => handleAction("approve-final", {approved: true, reviewer: "human"})}
-                      type="button"
-                    >
-                      Approve final
-                    </button>
-                    <button
-                      className="action-button danger"
-                      disabled={actionState.running}
-                      onClick={() => handleAction("approve-final", {approved: false, reviewer: "human"})}
-                      type="button"
-                    >
-                      Request final changes
-                    </button>
-                  </>
-                ) : null}
                 {availableActions.length === 0 ? <p className="muted">No actions available for this state.</p> : null}
               </div>
-              {actionState.message ? <p className="action-message success">{actionState.message}</p> : null}
-              {actionState.error ? <p className="action-message error">{actionState.error}</p> : null}
             </section>
 
             <section className="panel">
               <h2>Quality Report</h2>
-              <p className="video-path">{selectedProject.quality.videoPath ?? "No render path yet"}</p>
+              <p className="video-path">{selectedProject.quality?.videoPath ?? "No render path yet"}</p>
               <ul className="issue-list">
-                {selectedProject.quality.issues.length === 0 ? (
+                {(selectedProject.quality?.issues ?? []).length === 0 ? (
                   <li>No quality issues recorded.</li>
                 ) : (
-                  selectedProject.quality.issues.map((issue) => <li key={issue}>{issue}</li>)
+                  (selectedProject.quality?.issues ?? []).map((issue) => <li key={issue}>{issue}</li>)
                 )}
               </ul>
             </section>
 
             <section className="panel">
               <h2>Approval Summary</h2>
-              <ApprovalRow label="Script" value={selectedProject.approvals.script} />
-              <ApprovalRow label="Final" value={selectedProject.approvals.final} />
+              <ApprovalRow label="Script" value={selectedProject.approvals?.script} />
+              <ApprovalRow label="Final" value={selectedProject.approvals?.final} />
             </section>
 
             <section className="panel">
               <h2>Reports</h2>
-              <ReportPath label="Contact sheet" value={selectedProject.reports.contactSheetPath} />
-              <ReportPath label="Project report" value={selectedProject.reports.projectReportPath} />
-              <ReportPath label="Quality JSON" value={selectedProject.reports.qualityReportPath} />
+              <ReportPath label="Contact sheet" value={selectedProject.reports?.contactSheetPath} />
+              <ReportPath label="Project report" value={selectedProject.reports?.projectReportPath} />
+              <ReportPath label="Quality JSON" value={selectedProject.reports?.qualityReportPath} />
             </section>
           </aside>
         </div>
       </section>
     </main>
   );
+}
+
+async function invalidateProjectData(queryClient, projectId) {
+  await queryClient.invalidateQueries({queryKey: ["projects"]});
+  if (projectId) {
+    await queryClient.invalidateQueries({queryKey: ["jobs", projectId]});
+    await queryClient.invalidateQueries({queryKey: ["script", projectId]});
+  }
+}
+
+function hasActiveJob(jobs) {
+  return jobs.some((job) => ["queued", "running", "cancelling"].includes(job.status));
 }
 
 function mapSettingsPayload(payload) {
