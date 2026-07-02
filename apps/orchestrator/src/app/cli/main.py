@@ -22,6 +22,7 @@ from app.providers.cloudflare_image import (
 from app.providers.gemini_story import GeminiStoryProvider, GeminiStoryClient
 from app.providers.gemini_tts import GeminiSpeechClient, GeminiTTSProvider, GoogleGenAISpeechClient
 from app.repositories.checkpoint_repository import CheckpointRepository
+from app.repositories.job_repository import JobRepository
 from app.repositories.project_repository import ProjectRepository
 from app.schemas.project import CreateProjectRequest
 from app.services.approval_reporting import (
@@ -29,7 +30,7 @@ from app.services.approval_reporting import (
     ApprovalRequest,
     ReportRequest,
 )
-from app.services.dashboard_control import DashboardActionAdapter, DashboardControlService
+from app.services.dashboard_control import DashboardActionAdapter, DashboardControlService, DashboardJobService
 from app.services.dashboard_settings import DashboardSettingsService
 from app.services.artifacts import ArtifactStore
 from app.services.config import (
@@ -44,6 +45,7 @@ from app.services.quality import ffprobe_duration
 from app.services.rendering import RemotionRenderer
 from app.services.secret_store import WindowsDpapiProtector
 from app.services.content_pipeline import validate_story_content
+from app.services.job_worker import JobWorker
 from app.services.timeline import wav_metadata
 
 
@@ -249,11 +251,16 @@ def _run_dashboard_api(args: argparse.Namespace) -> int:
         approval_service_factory=lambda: ApprovalReportingService(projects, checkpoints),
         summary_service=summary_service,
     )
+    jobs = JobRepository(_repository_root() / "data" / "dashboard-jobs.sqlite")
+    worker = JobWorker(jobs, action_adapter)
+    worker.recover_interrupted_jobs()
+    job_service = DashboardJobService(jobs, worker)
     serve_dashboard_api(
         summary_service,
         action_adapter,
         host=args.host,
         port=args.port,
+        job_service=job_service,
         settings_service=settings_service,
         settings_tester=settings_tester,
     )

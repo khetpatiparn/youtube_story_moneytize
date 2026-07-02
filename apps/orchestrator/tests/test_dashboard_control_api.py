@@ -108,6 +108,64 @@ class _FakeActionAdapter:
         }
 
 
+class _FakeJobService:
+    def __init__(self):
+        self.calls = []
+        self.jobs = {
+            "job_001": {
+                "jobId": "job_001",
+                "projectId": "project_001",
+                "operation": "run",
+                "status": "running",
+                "progress": 0.5,
+                "stage": "images",
+                "errorCode": None,
+                "errorMessage": None,
+                "cancelRequested": False,
+            }
+        }
+        self.project_active_jobs = {"project_001": "job_001"}
+
+    def enqueue(self, project_id: str, operation: str):
+        self.calls.append(("enqueue", project_id, operation))
+        if project_id in self.project_active_jobs:
+            raise ValueError("active job")
+        job_id = f"job_{len(self.jobs) + 1:03d}"
+        job = {
+            "jobId": job_id,
+            "projectId": project_id,
+            "operation": operation,
+            "status": "queued",
+            "progress": 0.0,
+            "stage": None,
+            "errorCode": None,
+            "errorMessage": None,
+            "cancelRequested": False,
+        }
+        self.jobs[job_id] = job
+        self.project_active_jobs[project_id] = job_id
+        return job
+
+    def list_jobs(self, project_id: str | None = None):
+        jobs = list(self.jobs.values())
+        if project_id is not None:
+            jobs = [job for job in jobs if job["projectId"] == project_id]
+        return jobs
+
+    def get_job(self, job_id: str):
+        try:
+            return self.jobs[job_id]
+        except KeyError as error:
+            raise KeyError(job_id) from error
+
+    def cancel_job(self, job_id: str):
+        job = self.get_job(job_id)
+        job["status"] = "cancelling"
+        job["cancelRequested"] = True
+        self.calls.append(("cancel", job_id))
+        return job
+
+
 class _FakeSettingsService:
     def __init__(self):
         self.values = {
@@ -149,6 +207,7 @@ class DashboardControlApiTests(unittest.TestCase):
 
         self.summary_service = _FakeSummaryService()
         self.action_adapter = _FakeActionAdapter()
+        self.job_service = _FakeJobService()
         self.settings_service = _FakeSettingsService()
         self.settings_tester = _FakeSettingsTester()
         self.gate = ProjectActionGate()
@@ -157,6 +216,7 @@ class DashboardControlApiTests(unittest.TestCase):
             self.action_adapter,
             port=0,
             gate=self.gate,
+            job_service=self.job_service,
             settings_service=self.settings_service,
             settings_tester=self.settings_tester,
         )
@@ -258,19 +318,44 @@ class DashboardControlApiTests(unittest.TestCase):
         self.assertEqual(copied.status, 201)
         self.assertEqual(denied.status, 400)
 
-    def test_run_endpoint_invokes_action_adapter(self):
+    def test_run_endpoint_returns_accepted_job(self):
         response = self.request("POST", "/api/projects/project_001/run")
 
-        self.assertEqual(response.status, 200)
-        self.assertEqual(response.json["action"], "run")
-        self.assertIn(("run", "project_001"), self.action_adapter.calls)
+        self.assertEqual(response.status, 409)
+        self.assertEqual(response.json["job"]["jobId"], "job_001")
 
-    def test_resume_endpoint_invokes_action_adapter(self):
+    def test_resume_endpoint_returns_accepted_job_when_no_duplicate_exists(self):
+        self.job_service.project_active_jobs.pop("project_001", None)
         response = self.request("POST", "/api/projects/project_001/resume")
 
+        self.assertEqual(response.status, 202)
+        self.assertEqual(response.json["job"]["operation"], "resume")
+        self.assertIn(("enqueue", "project_001", "resume"), self.job_service.calls)
+
+    def test_list_jobs_endpoint_filters_by_project(self):
+        response = self.request("GET", "/api/jobs?projectId=project_001")
+
         self.assertEqual(response.status, 200)
-        self.assertEqual(response.json["action"], "resume")
-        self.assertIn(("resume", "project_001"), self.action_adapter.calls)
+        self.assertEqual(len(response.json["jobs"]), 1)
+        self.assertEqual(response.json["jobs"][0]["jobId"], "job_001")
+
+    def test_get_job_endpoint_returns_single_job(self):
+        response = self.request("GET", "/api/jobs/job_001")
+
+        self.assertEqual(response.status, 200)
+        self.assertEqual(response.json["job"]["status"], "running")
+
+    def test_cancel_job_endpoint_marks_job_cancelling(self):
+        response = self.request("POST", "/api/jobs/job_001/cancel")
+
+        self.assertEqual(response.status, 200)
+        self.assertEqual(response.json["job"]["status"], "cancelling")
+        self.assertTrue(response.json["job"]["cancelRequested"])
+
+    def test_unknown_job_returns_not_found(self):
+        response = self.request("GET", "/api/jobs/job_999")
+
+        self.assertEqual(response.status, 404)
 
     def test_approve_script_endpoint_validates_and_invokes_action_adapter(self):
         response = self.request(
@@ -346,17 +431,11 @@ class DashboardControlApiTests(unittest.TestCase):
         self.assertFalse(second)
         self.gate.release("project_001")
 
-    def test_duplicate_in_flight_action_returns_conflict(self):
-        self.assertTrue(self.gate.acquire("project_001"))
-
+    def test_duplicate_project_mutation_returns_conflict_with_active_job(self):
         response = self.request("POST", "/api/projects/project_001/resume")
 
         self.assertEqual(response.status, 409)
-        self.assertEqual(
-            response.json,
-            {"ok": False, "error": "Action already running for project_001."},
-        )
-        self.gate.release("project_001")
+        self.assertEqual(response.json["job"]["jobId"], "job_001")
 
     def test_approval_body_requires_boolean_approved(self):
         response = self.request(

@@ -33,6 +33,7 @@ class DashboardApiServer(ThreadingHTTPServer):
         summary_service,
         action_adapter,
         gate,
+        job_service=None,
         settings_service=None,
         settings_tester=None,
     ):
@@ -40,6 +41,7 @@ class DashboardApiServer(ThreadingHTTPServer):
         self.summary_service = summary_service
         self.action_adapter = action_adapter
         self.gate = gate
+        self.job_service = job_service
         self.settings_service = settings_service
         self.settings_tester = settings_tester
 
@@ -58,6 +60,20 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 return
             if parts == ["api", "projects"]:
                 self._write_json(200, {"projects": self.server.summary_service.list_projects()})
+                return
+            if parts == ["api", "jobs"]:
+                query = urlparse(self.path).query
+                project_id = None
+                if query:
+                    for item in query.split("&"):
+                        key, _, value = item.partition("=")
+                        if key == "projectId":
+                            project_id = value
+                            break
+                self._write_json(200, {"jobs": self._require_job_service().list_jobs(project_id)})
+                return
+            if len(parts) == 3 and parts[:2] == ["api", "jobs"]:
+                self._write_json(200, {"job": self._require_job_service().get_job(parts[2])})
                 return
             if len(parts) == 3 and parts[:2] == ["api", "projects"]:
                 self._write_json(200, self.server.summary_service.get_project(parts[2]))
@@ -110,21 +126,33 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 self._write_json(400, {"ok": False, "error": str(error)})
             return
         if len(parts) != 4 or parts[:2] != ["api", "projects"]:
+            if len(parts) == 4 and parts[:2] == ["api", "jobs"] and parts[3] == "cancel":
+                try:
+                    self._write_json(200, {"job": self._require_job_service().cancel_job(parts[2])})
+                except KeyError:
+                    self._write_json(404, {"ok": False, "error": "Job not found."})
+                except ValueError as error:
+                    self._write_json(400, {"ok": False, "error": str(error)})
+                return
             self._write_json(404, {"ok": False, "error": "Not found."})
             return
 
         project_id = parts[2]
         action = parts[3]
-        if not self.server.gate.acquire(project_id):
-            self._write_json(409, {"ok": False, "error": f"Action already running for {project_id}."})
-            return
 
         try:
             if action == "run":
-                payload = self.server.action_adapter.run_project(project_id)
+                payload = {"job": self._require_job_service().enqueue(project_id, "run")}
+                self._write_json(202, payload)
+                return
             elif action == "resume":
-                payload = self.server.action_adapter.resume_project(project_id)
+                payload = {"job": self._require_job_service().enqueue(project_id, "resume")}
+                self._write_json(202, payload)
+                return
             elif action in {"approve-script", "approve-final"}:
+                if not self.server.gate.acquire(project_id):
+                    self._write_json(409, {"ok": False, "error": f"Action already running for {project_id}."})
+                    return
                 body = self._read_json_body()
                 approved = body.get("approved")
                 if not isinstance(approved, bool):
@@ -140,14 +168,23 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 self._write_json(404, {"ok": False, "error": "Not found."})
                 return
             self._write_json(200, payload)
+        except ValueError as error:
+            if str(error) == "active job":
+                active_job = None
+                for job in self._require_job_service().list_jobs(project_id):
+                    if job.get("status") in {"queued", "running", "cancelling"}:
+                        active_job = job
+                        break
+                self._write_json(409, {"ok": False, "error": str(error), "job": active_job})
+                return
+            self._write_json(400, {"ok": False, "error": str(error)})
         except KeyError:
             self._write_json(404, {"ok": False, "error": "Project not found."})
         except FileNotFoundError:
             self._write_json(404, {"ok": False, "error": "Project not found."})
-        except ValueError as error:
-            self._write_json(400, {"ok": False, "error": str(error)})
         finally:
-            self.server.gate.release(project_id)
+            if action in {"approve-script", "approve-final"}:
+                self.server.gate.release(project_id)
 
     def do_DELETE(self) -> None:
         parts = _path_parts(self.path)
@@ -203,6 +240,11 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             raise ValueError("settings tester is not configured")
         return self.server.settings_tester
 
+    def _require_job_service(self):
+        if self.server.job_service is None:
+            raise ValueError("job service is not configured")
+        return self.server.job_service
+
     def _write_json(self, status_code: int, payload: dict[str, object]) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(status_code)
@@ -219,6 +261,7 @@ def create_dashboard_api_server(
     host: str = "127.0.0.1",
     port: int = 8000,
     gate: ProjectActionGate | None = None,
+    job_service=None,
     settings_service=None,
     settings_tester=None,
 ):
@@ -228,6 +271,7 @@ def create_dashboard_api_server(
         summary_service,
         action_adapter,
         gate or ProjectActionGate(),
+        job_service=job_service,
         settings_service=settings_service,
         settings_tester=settings_tester,
     )
@@ -240,6 +284,7 @@ def serve_dashboard_api(
     host: str = "127.0.0.1",
     port: int = 8000,
     gate: ProjectActionGate | None = None,
+    job_service=None,
     settings_service=None,
     settings_tester=None,
 ) -> int:
@@ -249,6 +294,7 @@ def serve_dashboard_api(
         host=host,
         port=port,
         gate=gate,
+        job_service=job_service,
         settings_service=settings_service,
         settings_tester=settings_tester,
     )

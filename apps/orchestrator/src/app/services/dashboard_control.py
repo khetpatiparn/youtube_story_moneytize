@@ -7,9 +7,12 @@ from pathlib import Path
 from typing import Any
 
 from app.repositories.checkpoint_repository import CheckpointRecord, CheckpointRepository
+from app.repositories.job_repository import JobRepository
 from app.repositories.project_repository import ProjectRepository
 from app.schemas.project import CreateProjectRequest, ProjectMetadata
+from app.schemas.job import JobRecord
 from app.services.approval_reporting import ApprovalReportingService, ApprovalRequest
+from app.services.job_worker import JobWorker
 from app.services.pipeline_runner import PipelineRunner, approval_stage_is_eligible
 
 CREATE_FIELDS = {"topic", "duration", "profile", "targetLanguage", "projectId"}
@@ -319,3 +322,42 @@ class DashboardActionAdapter:
 
     def _default_approval_service_factory(self) -> ApprovalReportingService:
         return ApprovalReportingService(self.projects, self.checkpoints)
+
+
+class DashboardJobService:
+    def __init__(self, jobs: JobRepository, worker: JobWorker) -> None:
+        self.jobs = jobs
+        self.worker = worker
+
+    def enqueue(self, project_id: str, operation: str) -> dict[str, object]:
+        job = self.jobs.enqueue(project_id, operation)
+        return _job_to_dict(job)
+
+    def list_jobs(self, project_id: str | None = None) -> list[dict[str, object]]:
+        return [_job_to_dict(job) for job in self.jobs.list_jobs(project_id)]
+
+    def get_job(self, job_id: str) -> dict[str, object]:
+        return _job_to_dict(self.jobs.get(job_id))
+
+    def cancel_job(self, job_id: str) -> dict[str, object]:
+        return _job_to_dict(self.jobs.request_cancel(job_id))
+
+
+def _job_to_dict(job: JobRecord) -> dict[str, object]:
+    return {
+        "jobId": job.job_id,
+        "projectId": job.project_id,
+        "operation": job.operation,
+        "status": job.status,
+        "sceneId": job.scene_id,
+        "progress": job.progress,
+        "stage": job.stage,
+        "attempts": job.attempts,
+        "errorCode": job.error_code,
+        "errorMessage": job.error_message,
+        "cancelRequested": job.cancel_requested,
+        "createdAt": job.created_at,
+        "updatedAt": job.updated_at,
+        "startedAt": job.started_at,
+        "finishedAt": job.finished_at,
+    }

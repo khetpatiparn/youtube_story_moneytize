@@ -111,6 +111,23 @@ class JobRepository:
 
         return self.get(job_id)
 
+    def list_jobs(self, project_id: str | None = None) -> list[JobRecord]:
+        self._ensure_schema()
+        query = """
+            select
+                job_id, project_id, operation, status, scene_id, progress, stage, attempts,
+                error_code, error_message, cancel_requested, created_at, updated_at, started_at, finished_at
+            from jobs
+        """
+        params: tuple[object, ...] = ()
+        if project_id is not None:
+            query += " where project_id = ?"
+            params = (project_id,)
+        query += " order by created_at desc"
+        with closing(sqlite3.connect(self.db_path)) as connection:
+            rows = connection.execute(query, params).fetchall()
+        return [self._row_to_record(row) for row in rows]
+
     def get(self, job_id: str) -> JobRecord:
         self._ensure_schema()
         with closing(sqlite3.connect(self.db_path)) as connection:
@@ -128,6 +145,34 @@ class JobRepository:
         if row is None:
             raise KeyError(job_id)
         return self._row_to_record(row)
+
+    def request_cancel(self, job_id: str) -> JobRecord:
+        self._ensure_schema()
+        timestamp = self._now()
+        with closing(sqlite3.connect(self.db_path)) as connection:
+            with connection:
+                current = connection.execute(
+                    """
+                    select status
+                    from jobs
+                    where job_id = ?
+                    """,
+                    (job_id,),
+                ).fetchone()
+                if current is None:
+                    raise KeyError(job_id)
+                next_status = "cancelling" if current[0] in {"queued", "running"} else current[0]
+                connection.execute(
+                    """
+                    update jobs
+                    set cancel_requested = 1,
+                        status = ?,
+                        updated_at = ?
+                    where job_id = ?
+                    """,
+                    (next_status, timestamp, job_id),
+                )
+        return self.get(job_id)
 
     def reopen_interrupted_jobs(self) -> list[JobRecord]:
         self._ensure_schema()
