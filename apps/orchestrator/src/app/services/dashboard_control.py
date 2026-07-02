@@ -237,7 +237,7 @@ class DashboardActionAdapter:
         projects: ProjectRepository,
         checkpoints: CheckpointRepository,
         *,
-        runner_factory: Callable[[str, bool], Any] | None = None,
+        runner_factory: Callable[..., Any] | None = None,
         approval_service_factory: Callable[[], ApprovalReportingService] | None = None,
         summary_service: DashboardControlService | None = None,
     ) -> None:
@@ -247,11 +247,15 @@ class DashboardActionAdapter:
         self.approval_service_factory = approval_service_factory or self._default_approval_service_factory
         self.summary_service = summary_service or DashboardControlService(projects, checkpoints)
 
-    def run_project(self, project_id: str) -> dict[str, object]:
+    def run_project(self, project_id: str, *, progress_reporter: Any = None) -> dict[str, object]:
         self.projects.project_dir(project_id)
         if self.runner_factory is None:
             raise ValueError("runner_factory is required for run")
-        result = self.runner_factory(project_id, configure_content=True).run(project_id)
+        result = self.runner_factory(
+            project_id,
+            configure_content=True,
+            progress_reporter=progress_reporter,
+        ).run(project_id)
         return self._action_summary(
             project_id,
             "run",
@@ -259,11 +263,15 @@ class DashboardActionAdapter:
             result,
         )
 
-    def resume_project(self, project_id: str) -> dict[str, object]:
+    def resume_project(self, project_id: str, *, progress_reporter: Any = None) -> dict[str, object]:
         self.projects.project_dir(project_id)
         if self.runner_factory is None:
             raise ValueError("runner_factory is required for resume")
-        result = self.runner_factory(project_id, configure_content=False).resume(project_id)
+        result = self.runner_factory(
+            project_id,
+            configure_content=False,
+            progress_reporter=progress_reporter,
+        ).resume(project_id)
         return self._action_summary(
             project_id,
             "resume",

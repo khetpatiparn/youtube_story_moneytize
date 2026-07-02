@@ -50,6 +50,44 @@ class PipelineRunnerTests(unittest.TestCase):
             self.assertEqual(metadata.status, state["status"])
             self.assertEqual(metadata.current_node, state["current_node"])
 
+    def test_first_run_reports_content_and_script_approval_stages(self):
+        from app.services.pipeline_runner import PipelineRunner
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            projects, checkpoints = self._setup(temp_dir)
+            provider = type(
+                "Provider",
+                (),
+                {
+                    "provider": "google",
+                    "model": "gemini-2.5-flash",
+                    "generate_story": lambda self, *args: {
+                        "outline": {"title": "Story", "beats": ["A", "B", "C"]},
+                        "script": "one\n\ntwo\n\nthree",
+                        "scenes": [
+                            {"scene_id": "scene_001", "title": "A", "narration": "one", "prompt": "p1", "motion": "slow_push", "focal_point": [0.5, 0.5]},
+                            {"scene_id": "scene_002", "title": "B", "narration": "two", "prompt": "p2", "motion": "slow_push", "focal_point": [0.5, 0.5]},
+                            {"scene_id": "scene_003", "title": "C", "narration": "three", "prompt": "p3", "motion": "slow_push", "focal_point": [0.5, 0.5]},
+                        ],
+                    },
+                },
+            )()
+            events = []
+
+            class Reporter:
+                def stage(self, name, progress):
+                    events.append((name, progress))
+
+            PipelineRunner(
+                projects,
+                checkpoints,
+                content_provider=provider,
+                progress_reporter=Reporter(),
+            ).run("project_001")
+
+            self.assertEqual(events[0], ("content", 0.1))
+            self.assertEqual(events[-1], ("script_approval", 0.2))
+
     def test_first_run_injects_content_provider_only_for_fresh_generation(self):
         from app.services.pipeline_runner import PipelineRunner
 

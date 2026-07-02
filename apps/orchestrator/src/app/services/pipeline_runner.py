@@ -32,6 +32,7 @@ class PipelineRunner:
         video_probe: Any = None,
         max_image_attempts: int = 3,
         tts_words_per_second: float = 2.5,
+        progress_reporter: Any = None,
     ) -> None:
         self.projects = projects
         self.checkpoints = checkpoints
@@ -47,6 +48,7 @@ class PipelineRunner:
         ):
             raise ValueError("max_image_attempts must be a positive integer")
         self.max_image_attempts = max_image_attempts
+        self.progress_reporter = progress_reporter or _NullProgressReporter()
         if not isinstance(tts_words_per_second, (int, float)) or not math.isfinite(
             tts_words_per_second
         ) or tts_words_per_second <= 0:
@@ -63,6 +65,7 @@ class PipelineRunner:
             ArtifactStore(self.projects.project_dir(project_id)),
             self.content_provider,
         )
+        self.progress_reporter.stage("content", 0.1)
         state = pipeline.generate(metadata.to_graph_state())
         paused: VideoProjectState = {
             **state,
@@ -70,6 +73,7 @@ class PipelineRunner:
             "current_node": "script_approval",
             "waiting_for": "script",
         }
+        self.progress_reporter.stage("script_approval", 0.2)
         return self.reconcile_state(project_id, paused)
 
     def resume(self, project_id: str) -> VideoProjectState:
@@ -447,3 +451,24 @@ def _approval_stage_for_state(state: VideoProjectState) -> str | None:
 
 def approval_stage_is_eligible(state: VideoProjectState, stage: str) -> bool:
     return _approval_stage_for_state(state) == stage
+
+
+class _NullProgressReporter:
+    def stage(self, name: str, progress: float) -> None:
+        del name
+        del progress
+
+    def scene(
+        self,
+        scene_id: str,
+        status: str,
+        *,
+        attempt: int,
+        progress: float,
+        error: str | None = None,
+    ) -> None:
+        del scene_id
+        del status
+        del attempt
+        del progress
+        del error

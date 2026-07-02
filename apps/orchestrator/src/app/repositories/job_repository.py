@@ -174,6 +174,41 @@ class JobRepository:
                 )
         return self.get(job_id)
 
+    def update_progress(
+        self,
+        job_id: str,
+        *,
+        progress: float | None = None,
+        stage: str | None = None,
+    ) -> JobRecord:
+        self._ensure_schema()
+        timestamp = self._now()
+        with closing(sqlite3.connect(self.db_path)) as connection:
+            with connection:
+                current = connection.execute(
+                    """
+                    select progress, stage
+                    from jobs
+                    where job_id = ?
+                    """,
+                    (job_id,),
+                ).fetchone()
+                if current is None:
+                    raise KeyError(job_id)
+                next_progress = current[0] if progress is None else progress
+                next_stage = current[1] if stage is None else stage
+                connection.execute(
+                    """
+                    update jobs
+                    set progress = ?,
+                        stage = ?,
+                        updated_at = ?
+                    where job_id = ?
+                    """,
+                    (next_progress, next_stage, timestamp, job_id),
+                )
+        return self.get(job_id)
+
     def reopen_interrupted_jobs(self) -> list[JobRecord]:
         self._ensure_schema()
         timestamp = self._now()

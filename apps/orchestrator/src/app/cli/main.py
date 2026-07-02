@@ -236,7 +236,7 @@ def _run_dashboard_api(args: argparse.Namespace) -> int:
     settings_tester = DashboardProviderTester(settings_service)
     script_editor = ScriptEditor(projects)
 
-    def runner_factory(project_id: str, *, configure_content: bool) -> PipelineRunner:
+    def runner_factory(project_id: str, *, configure_content: bool, progress_reporter=None) -> PipelineRunner:
         runner_args = SimpleNamespace(
             projects_dir=args.projects_dir,
             checkpoint_db=args.checkpoint_db,
@@ -244,7 +244,11 @@ def _run_dashboard_api(args: argparse.Namespace) -> int:
             max_image_attempts=3,
             tts_words_per_second=2.5,
         )
-        return _build_pipeline_runner(runner_args, configure_content=configure_content)
+        return _build_pipeline_runner(
+            runner_args,
+            configure_content=configure_content,
+            progress_reporter=progress_reporter,
+        )
 
     action_adapter = DashboardActionAdapter(
         projects,
@@ -508,7 +512,11 @@ def _repository_root() -> Path:
 
 
 def _build_pipeline_runner(
-    args: argparse.Namespace, *, configure_content: bool = False, project_id: str | None = None
+    args: argparse.Namespace,
+    *,
+    configure_content: bool = False,
+    project_id: str | None = None,
+    progress_reporter=None,
 ) -> PipelineRunner:
     repository = ProjectRepository(Path(args.projects_dir))
     checkpoints = CheckpointRepository(Path(args.checkpoint_db))
@@ -538,4 +546,5 @@ def _build_pipeline_runner(
         tts_provider=tts_provider,
         max_image_attempts=args.max_image_attempts,
         tts_words_per_second=args.tts_words_per_second,
+        progress_reporter=progress_reporter,
     )

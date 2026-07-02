@@ -54,6 +54,19 @@ class JobRepositoryTests(unittest.TestCase):
             self.assertEqual(detail.status, "failed")
             self.assertEqual(detail.error_code, "application_restarted")
 
+    def test_update_progress_changes_stage_without_finishing_job(self):
+        from app.repositories.job_repository import JobRepository
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repository = JobRepository(Path(temp_dir) / "jobs.sqlite")
+            job = repository.enqueue("project_001", "run")
+
+            updated = repository.update_progress(job.job_id, progress=0.5, stage="images")
+
+            self.assertEqual(updated.status, "queued")
+            self.assertEqual(updated.progress, 0.5)
+            self.assertEqual(updated.stage, "images")
+
 
 if __name__ == "__main__":
     unittest.main()

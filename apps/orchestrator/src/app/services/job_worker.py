@@ -5,6 +5,7 @@ from typing import Any
 
 from app.repositories.job_repository import JobRepository
 from app.services.error_sanitizer import sanitize_error
+from app.services.progress_reporter import ProgressReporter
 
 OPERATIONS = {"run": "run_project", "resume": "resume_project"}
 
@@ -27,7 +28,11 @@ class JobWorker:
             return False
 
         try:
-            result = getattr(self.actions, OPERATIONS[job.operation])(job.project_id)
+            reporter = ProgressReporter(self.jobs, job.job_id)
+            result = getattr(self.actions, OPERATIONS[job.operation])(
+                job.project_id,
+                progress_reporter=reporter,
+            )
             self.jobs.finish(
                 job.job_id,
                 "succeeded",

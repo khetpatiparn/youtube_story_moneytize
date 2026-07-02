@@ -27,7 +27,12 @@ class JobWorkerTests(unittest.TestCase):
         detail = self.jobs.get(job.job_id)
 
         self.assertTrue(processed)
-        self.actions.run_project.assert_called_once_with("project_001")
+        self.actions.run_project.assert_called_once()
+        self.assertEqual(self.actions.run_project.call_args.args, ("project_001",))
+        self.assertEqual(
+            type(self.actions.run_project.call_args.kwargs["progress_reporter"]).__name__,
+            "ProgressReporter",
+        )
         self.assertEqual(detail.status, "succeeded")
         self.assertEqual(detail.progress, 1.0)
         self.assertEqual(detail.stage, "script_approval")
@@ -52,6 +57,28 @@ class JobWorkerTests(unittest.TestCase):
         worker = JobWorker(self.jobs, self.actions, secret_values=lambda: [])
 
         self.assertFalse(worker.process_one())
+
+    def test_worker_passes_progress_reporter_to_actions(self):
+        from app.services.job_worker import JobWorker
+
+        seen = {}
+
+        def run_project(project_id, progress_reporter=None):
+            seen["project_id"] = project_id
+            seen["reporter_type"] = type(progress_reporter).__name__ if progress_reporter is not None else None
+            progress_reporter.stage("images", 0.6)
+            return {"currentNode": "script_approval"}
+
+        self.actions.run_project.side_effect = run_project
+        worker = JobWorker(self.jobs, self.actions, secret_values=lambda: [])
+        job = self.jobs.enqueue("project_001", "run")
+
+        worker.process_one()
+        detail = self.jobs.get(job.job_id)
+
+        self.assertEqual(seen["project_id"], "project_001")
+        self.assertEqual(seen["reporter_type"], "ProgressReporter")
+        self.assertEqual(detail.status, "succeeded")
 
     def test_recover_interrupted_jobs_marks_running_jobs_failed(self):
         from app.services.job_worker import JobWorker
