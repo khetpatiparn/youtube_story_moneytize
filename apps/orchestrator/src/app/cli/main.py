@@ -47,6 +47,7 @@ from app.services.secret_store import WindowsDpapiProtector
 from app.services.script_editor import ScriptEditor
 from app.services.content_pipeline import validate_story_content
 from app.services.job_worker import JobWorker
+from app.services.project_events import ProjectEventStore
 from app.services.timeline import wav_metadata
 
 
@@ -235,6 +236,7 @@ def _run_dashboard_api(args: argparse.Namespace) -> int:
     )
     settings_tester = DashboardProviderTester(settings_service)
     script_editor = ScriptEditor(projects)
+    event_store = ProjectEventStore()
 
     def runner_factory(project_id: str, *, configure_content: bool, progress_reporter=None) -> PipelineRunner:
         runner_args = SimpleNamespace(
@@ -258,7 +260,7 @@ def _run_dashboard_api(args: argparse.Namespace) -> int:
         summary_service=summary_service,
     )
     jobs = JobRepository(_repository_root() / "data" / "dashboard-jobs.sqlite")
-    worker = JobWorker(jobs, action_adapter)
+    worker = JobWorker(jobs, action_adapter, events=event_store)
     worker.recover_interrupted_jobs()
     job_service = DashboardJobService(jobs, worker)
     serve_dashboard_api(
@@ -268,6 +270,7 @@ def _run_dashboard_api(args: argparse.Namespace) -> int:
         port=args.port,
         job_service=job_service,
         script_editor=script_editor,
+        event_store=event_store,
         settings_service=settings_service,
         settings_tester=settings_tester,
     )

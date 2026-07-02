@@ -35,6 +35,7 @@ class DashboardApiServer(ThreadingHTTPServer):
         gate,
         job_service=None,
         script_editor=None,
+        event_store=None,
         settings_service=None,
         settings_tester=None,
     ):
@@ -44,6 +45,7 @@ class DashboardApiServer(ThreadingHTTPServer):
         self.gate = gate
         self.job_service = job_service
         self.script_editor = script_editor
+        self.event_store = event_store
         self.settings_service = settings_service
         self.settings_tester = settings_tester
 
@@ -79,6 +81,9 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 return
             if len(parts) == 4 and parts[:2] == ["api", "projects"] and parts[3] == "script":
                 self._write_json(200, self._require_script_editor().read(parts[2]))
+                return
+            if len(parts) == 4 and parts[:2] == ["api", "projects"] and parts[3] == "events":
+                self._write_json(200, {"events": self._require_event_store().list_events(parts[2])})
                 return
             if len(parts) == 3 and parts[:2] == ["api", "projects"]:
                 self._write_json(200, self.server.summary_service.get_project(parts[2]))
@@ -281,6 +286,11 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             raise ValueError("script editor is not configured")
         return self.server.script_editor
 
+    def _require_event_store(self):
+        if self.server.event_store is None:
+            raise ValueError("event store is not configured")
+        return self.server.event_store
+
     def _write_json(self, status_code: int, payload: dict[str, object]) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(status_code)
@@ -299,6 +309,7 @@ def create_dashboard_api_server(
     gate: ProjectActionGate | None = None,
     job_service=None,
     script_editor=None,
+    event_store=None,
     settings_service=None,
     settings_tester=None,
 ):
@@ -310,6 +321,7 @@ def create_dashboard_api_server(
         gate or ProjectActionGate(),
         job_service=job_service,
         script_editor=script_editor,
+        event_store=event_store,
         settings_service=settings_service,
         settings_tester=settings_tester,
     )
@@ -324,6 +336,7 @@ def serve_dashboard_api(
     gate: ProjectActionGate | None = None,
     job_service=None,
     script_editor=None,
+    event_store=None,
     settings_service=None,
     settings_tester=None,
 ) -> int:
@@ -335,6 +348,7 @@ def serve_dashboard_api(
         gate=gate,
         job_service=job_service,
         script_editor=script_editor,
+        event_store=event_store,
         settings_service=settings_service,
         settings_tester=settings_tester,
     )

@@ -12,6 +12,9 @@ class JobRecord:
     scene_id: str | None
     progress: float
     stage: str | None
+    preview_image_path: str | None
+    script_excerpt: str | None
+    prompt_excerpt: str | None
     attempts: int
     error_code: str | None
     error_message: str | None

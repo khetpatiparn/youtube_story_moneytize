@@ -27,8 +27,9 @@ class JobRepository:
                         """
                         insert into jobs (
                             job_id, project_id, operation, scene_id, status, progress, stage, attempts,
+                            preview_image_path, script_excerpt, prompt_excerpt,
                             error_code, error_message, cancel_requested, created_at, updated_at, started_at, finished_at
-                        ) values (?, ?, ?, ?, 'queued', 0.0, null, 0, null, null, 0, ?, ?, null, null)
+                        ) values (?, ?, ?, ?, 'queued', 0.0, null, 0, null, null, null, null, null, 0, ?, ?, null, null)
                         """,
                         (job_id, project_id, operation, scene_id, timestamp, timestamp),
                     )
@@ -83,7 +84,7 @@ class JobRepository:
             with connection:
                 current = connection.execute(
                     """
-                    select progress, stage
+                    select progress, stage, preview_image_path, script_excerpt, prompt_excerpt
                     from jobs
                     where job_id = ?
                     """,
@@ -100,13 +101,28 @@ class JobRepository:
                     set status = ?,
                         progress = ?,
                         stage = ?,
+                        preview_image_path = ?,
+                        script_excerpt = ?,
+                        prompt_excerpt = ?,
                         error_code = ?,
                         error_message = ?,
                         updated_at = ?,
                         finished_at = ?
                     where job_id = ?
                     """,
-                    (status, next_progress, next_stage, error_code, error_message, timestamp, timestamp, job_id),
+                    (
+                        status,
+                        next_progress,
+                        next_stage,
+                        current[2],
+                        current[3],
+                        current[4],
+                        error_code,
+                        error_message,
+                        timestamp,
+                        timestamp,
+                        job_id,
+                    ),
                 )
 
         return self.get(job_id)
@@ -116,6 +132,7 @@ class JobRepository:
         query = """
             select
                 job_id, project_id, operation, status, scene_id, progress, stage, attempts,
+                preview_image_path, script_excerpt, prompt_excerpt,
                 error_code, error_message, cancel_requested, created_at, updated_at, started_at, finished_at
             from jobs
         """
@@ -135,6 +152,7 @@ class JobRepository:
                 """
                 select
                     job_id, project_id, operation, status, scene_id, progress, stage, attempts,
+                    preview_image_path, script_excerpt, prompt_excerpt,
                     error_code, error_message, cancel_requested, created_at, updated_at, started_at, finished_at
                 from jobs
                 where job_id = ?
@@ -180,6 +198,10 @@ class JobRepository:
         *,
         progress: float | None = None,
         stage: str | None = None,
+        scene_id: str | None = None,
+        preview_image_path: str | None = None,
+        script_excerpt: str | None = None,
+        prompt_excerpt: str | None = None,
     ) -> JobRecord:
         self._ensure_schema()
         timestamp = self._now()
@@ -187,7 +209,7 @@ class JobRepository:
             with connection:
                 current = connection.execute(
                     """
-                    select progress, stage
+                    select progress, stage, scene_id, preview_image_path, script_excerpt, prompt_excerpt
                     from jobs
                     where job_id = ?
                     """,
@@ -197,15 +219,32 @@ class JobRepository:
                     raise KeyError(job_id)
                 next_progress = current[0] if progress is None else progress
                 next_stage = current[1] if stage is None else stage
+                next_scene_id = current[2] if scene_id is None else scene_id
+                next_preview_image_path = current[3] if preview_image_path is None else preview_image_path
+                next_script_excerpt = current[4] if script_excerpt is None else script_excerpt
+                next_prompt_excerpt = current[5] if prompt_excerpt is None else prompt_excerpt
                 connection.execute(
                     """
                     update jobs
                     set progress = ?,
                         stage = ?,
+                        scene_id = ?,
+                        preview_image_path = ?,
+                        script_excerpt = ?,
+                        prompt_excerpt = ?,
                         updated_at = ?
                     where job_id = ?
                     """,
-                    (next_progress, next_stage, timestamp, job_id),
+                    (
+                        next_progress,
+                        next_stage,
+                        next_scene_id,
+                        next_preview_image_path,
+                        next_script_excerpt,
+                        next_prompt_excerpt,
+                        timestamp,
+                        job_id,
+                    ),
                 )
         return self.get(job_id)
 
@@ -251,6 +290,9 @@ class JobRepository:
                         status text not null,
                         progress real not null,
                         stage text,
+                        preview_image_path text,
+                        script_excerpt text,
+                        prompt_excerpt text,
                         attempts integer not null,
                         error_code text,
                         error_message text,
@@ -269,6 +311,16 @@ class JobRepository:
                     where status in ('queued', 'running', 'cancelling')
                     """
                 )
+                columns = {
+                    row[1]
+                    for row in connection.execute("pragma table_info(jobs)").fetchall()
+                }
+                if "preview_image_path" not in columns:
+                    connection.execute("alter table jobs add column preview_image_path text")
+                if "script_excerpt" not in columns:
+                    connection.execute("alter table jobs add column script_excerpt text")
+                if "prompt_excerpt" not in columns:
+                    connection.execute("alter table jobs add column prompt_excerpt text")
 
     def _row_to_record(self, row: tuple[object, ...]) -> JobRecord:
         return JobRecord(
@@ -279,14 +331,17 @@ class JobRepository:
             scene_id=None if row[4] is None else str(row[4]),
             progress=float(row[5]),
             stage=None if row[6] is None else str(row[6]),
+            preview_image_path=None if row[8] is None else str(row[8]),
+            script_excerpt=None if row[9] is None else str(row[9]),
+            prompt_excerpt=None if row[10] is None else str(row[10]),
             attempts=int(row[7]),
-            error_code=None if row[8] is None else str(row[8]),
-            error_message=None if row[9] is None else str(row[9]),
-            cancel_requested=bool(row[10]),
-            created_at=str(row[11]),
-            updated_at=str(row[12]),
-            started_at=None if row[13] is None else str(row[13]),
-            finished_at=None if row[14] is None else str(row[14]),
+            error_code=None if row[11] is None else str(row[11]),
+            error_message=None if row[12] is None else str(row[12]),
+            cancel_requested=bool(row[13]),
+            created_at=str(row[14]),
+            updated_at=str(row[15]),
+            started_at=None if row[16] is None else str(row[16]),
+            finished_at=None if row[17] is None else str(row[17]),
         )
 
     def _now(self) -> str:

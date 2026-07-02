@@ -5,6 +5,7 @@ from typing import Any
 
 from app.repositories.job_repository import JobRepository
 from app.services.error_sanitizer import sanitize_error
+from app.services.project_events import ProjectEventStore
 from app.services.progress_reporter import ProgressReporter
 
 OPERATIONS = {"run": "run_project", "resume": "resume_project"}
@@ -16,10 +17,12 @@ class JobWorker:
         jobs: JobRepository,
         actions: Any,
         *,
+        events: ProjectEventStore | None = None,
         secret_values: Callable[[], list[str]] | None = None,
     ) -> None:
         self.jobs = jobs
         self.actions = actions
+        self.events = events
         self.secret_values = secret_values or (lambda: [])
 
     def process_one(self) -> bool:
@@ -28,7 +31,7 @@ class JobWorker:
             return False
 
         try:
-            reporter = ProgressReporter(self.jobs, job.job_id)
+            reporter = ProgressReporter(self.jobs, job.job_id, self.events)
             result = getattr(self.actions, OPERATIONS[job.operation])(
                 job.project_id,
                 progress_reporter=reporter,

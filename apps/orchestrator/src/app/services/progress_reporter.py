@@ -1,15 +1,22 @@
 from __future__ import annotations
 
 from app.repositories.job_repository import JobRepository
+from app.services.project_events import ProjectEventStore
 
 
 class ProgressReporter:
-    def __init__(self, jobs: JobRepository, job_id: str) -> None:
+    def __init__(self, jobs: JobRepository, job_id: str, events: ProjectEventStore | None = None) -> None:
         self.jobs = jobs
         self.job_id = job_id
+        self.events = events
+
+    def _project_id(self) -> str:
+        return self.jobs.get(self.job_id).project_id
 
     def stage(self, name: str, progress: float) -> None:
         self.jobs.update_progress(self.job_id, progress=progress, stage=name)
+        if self.events is not None:
+            self.events.append(self._project_id(), name, None, f"Stage updated to {name}")
 
     def scene(
         self,
@@ -18,12 +25,30 @@ class ProgressReporter:
         *,
         attempt: int,
         progress: float,
+        prompt_excerpt: str | None = None,
+        script_excerpt: str | None = None,
+        preview_image_path: str | None = None,
         error: str | None = None,
     ) -> None:
-        del attempt
-        del error
         self.jobs.update_progress(
             self.job_id,
             progress=progress,
-            stage=f"scene:{scene_id}:{status}",
+            stage=status,
+            scene_id=scene_id,
+            preview_image_path=preview_image_path,
+            script_excerpt=script_excerpt,
+            prompt_excerpt=prompt_excerpt,
         )
+        if self.events is not None:
+            message = f"{status} for {scene_id} (attempt {attempt})"
+            if error:
+                message = f"{message}: {error}"
+            self.events.append(
+                self._project_id(),
+                status,
+                scene_id,
+                message,
+                promptExcerpt=prompt_excerpt,
+                scriptExcerpt=script_excerpt,
+                previewImagePath=preview_image_path,
+            )

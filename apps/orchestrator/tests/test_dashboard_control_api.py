@@ -119,6 +119,10 @@ class _FakeJobService:
                 "status": "running",
                 "progress": 0.5,
                 "stage": "images",
+                "sceneId": "scene_001",
+                "previewImagePath": "projects/project_001/scenes/scene_001.jpg",
+                "scriptExcerpt": "The spirit stepped onto the riverbank.",
+                "promptExcerpt": "Thai folktale river spirit at sunrise",
                 "errorCode": None,
                 "errorMessage": None,
                 "cancelRequested": False,
@@ -138,6 +142,10 @@ class _FakeJobService:
             "status": "queued",
             "progress": 0.0,
             "stage": None,
+            "sceneId": None,
+            "previewImagePath": None,
+            "scriptExcerpt": None,
+            "promptExcerpt": None,
             "errorCode": None,
             "errorMessage": None,
             "cancelRequested": False,
@@ -226,6 +234,25 @@ class _FakeScriptEditor:
         return {"revision": self.revision, "scenes": list(self.scenes)}
 
 
+class _FakeEventStore:
+    def __init__(self):
+        self.events = {
+            "project_001": [
+                {
+                    "eventId": "evt_001",
+                    "timestamp": "2026-07-02T10:30:15Z",
+                    "level": "info",
+                    "stage": "images",
+                    "sceneId": "scene_003",
+                    "message": "Image generation started",
+                }
+            ]
+        }
+
+    def list_events(self, project_id: str):
+        return list(self.events.get(project_id, []))
+
+
 class DashboardControlApiTests(unittest.TestCase):
     def setUp(self):
         from app.http.dashboard_api import ProjectActionGate, create_dashboard_api_server
@@ -236,6 +263,7 @@ class DashboardControlApiTests(unittest.TestCase):
         self.settings_service = _FakeSettingsService()
         self.settings_tester = _FakeSettingsTester()
         self.script_editor = _FakeScriptEditor()
+        self.event_store = _FakeEventStore()
         self.gate = ProjectActionGate()
         self.server = create_dashboard_api_server(
             self.summary_service,
@@ -244,6 +272,7 @@ class DashboardControlApiTests(unittest.TestCase):
             gate=self.gate,
             job_service=self.job_service,
             script_editor=self.script_editor,
+            event_store=self.event_store,
             settings_service=self.settings_service,
             settings_tester=self.settings_tester,
         )
@@ -287,6 +316,13 @@ class DashboardControlApiTests(unittest.TestCase):
         self.assertEqual(response.status, 200)
         self.assertEqual(response.json["revision"], "rev_001")
         self.assertEqual(response.json["scenes"][0]["sceneId"], "scene_001")
+
+    def test_get_project_events_returns_recent_timeline(self):
+        response = self.request("GET", "/api/projects/project_001/events")
+
+        self.assertEqual(response.status, 200)
+        self.assertEqual(response.json["events"][0]["sceneId"], "scene_003")
+        self.assertEqual(response.json["events"][0]["message"], "Image generation started")
 
     def test_health_endpoint_reports_ready(self):
         response = self.request("GET", "/api/health")
@@ -378,6 +414,10 @@ class DashboardControlApiTests(unittest.TestCase):
 
         self.assertEqual(response.status, 200)
         self.assertEqual(response.json["job"]["status"], "running")
+        self.assertEqual(response.json["job"]["sceneId"], "scene_001")
+        self.assertEqual(response.json["job"]["previewImagePath"], "projects/project_001/scenes/scene_001.jpg")
+        self.assertEqual(response.json["job"]["scriptExcerpt"], "The spirit stepped onto the riverbank.")
+        self.assertEqual(response.json["job"]["promptExcerpt"], "Thai folktale river spirit at sunrise")
 
     def test_cancel_job_endpoint_marks_job_cancelling(self):
         response = self.request("POST", "/api/jobs/job_001/cancel")
