@@ -34,6 +34,7 @@ class DashboardApiServer(ThreadingHTTPServer):
         action_adapter,
         gate,
         job_service=None,
+        script_editor=None,
         settings_service=None,
         settings_tester=None,
     ):
@@ -42,6 +43,7 @@ class DashboardApiServer(ThreadingHTTPServer):
         self.action_adapter = action_adapter
         self.gate = gate
         self.job_service = job_service
+        self.script_editor = script_editor
         self.settings_service = settings_service
         self.settings_tester = settings_tester
 
@@ -75,6 +77,9 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             if len(parts) == 3 and parts[:2] == ["api", "jobs"]:
                 self._write_json(200, {"job": self._require_job_service().get_job(parts[2])})
                 return
+            if len(parts) == 4 and parts[:2] == ["api", "projects"] and parts[3] == "script":
+                self._write_json(200, self._require_script_editor().read(parts[2]))
+                return
             if len(parts) == 3 and parts[:2] == ["api", "projects"]:
                 self._write_json(200, self.server.summary_service.get_project(parts[2]))
                 return
@@ -90,6 +95,20 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         parts = _path_parts(self.path)
         try:
             if parts != ["api", "settings"]:
+                if len(parts) == 4 and parts[:2] == ["api", "projects"] and parts[3] == "script":
+                    body = self._read_json_body(require_json=True)
+                    active_job = _active_job_for_project(self._require_job_service(), parts[2])
+                    if active_job is not None:
+                        self._write_json(409, {"ok": False, "error": "active job", "job": active_job})
+                        return
+                    revision = body.get("revision")
+                    scenes = body.get("scenes")
+                    if not isinstance(revision, str):
+                        raise ValueError("revision must be a string")
+                    if not isinstance(scenes, list):
+                        raise ValueError("scenes must be a list")
+                    self._write_json(200, self._require_script_editor().update(parts[2], revision, scenes))
+                    return
                 self._write_json(404, {"ok": False, "error": "Not found."})
                 return
             body = self._read_json_body(require_json=True)
@@ -163,6 +182,18 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 if len(reviewer.strip() or "human") > 64:
                     raise ValueError("reviewer must be at most 64 characters")
                 stage = "script" if action == "approve-script" else "final"
+                if stage == "script":
+                    active_job = _active_job_for_project(self._require_job_service(), project_id)
+                    if active_job is not None:
+                        self._write_json(409, {"ok": False, "error": "active job", "job": active_job})
+                        return
+                    revision = body.get("revision")
+                    if not isinstance(revision, str):
+                        raise ValueError("revision must be a string")
+                    current = self._require_script_editor().read(project_id)
+                    if revision != current.get("revision"):
+                        self._write_json(409, {"ok": False, "error": "revision conflict", "revision": current.get("revision")})
+                        return
                 payload = self.server.action_adapter.approve(stage, project_id, approved, reviewer)
             else:
                 self._write_json(404, {"ok": False, "error": "Not found."})
@@ -245,6 +276,11 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             raise ValueError("job service is not configured")
         return self.server.job_service
 
+    def _require_script_editor(self):
+        if self.server.script_editor is None:
+            raise ValueError("script editor is not configured")
+        return self.server.script_editor
+
     def _write_json(self, status_code: int, payload: dict[str, object]) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(status_code)
@@ -262,6 +298,7 @@ def create_dashboard_api_server(
     port: int = 8000,
     gate: ProjectActionGate | None = None,
     job_service=None,
+    script_editor=None,
     settings_service=None,
     settings_tester=None,
 ):
@@ -272,6 +309,7 @@ def create_dashboard_api_server(
         action_adapter,
         gate or ProjectActionGate(),
         job_service=job_service,
+        script_editor=script_editor,
         settings_service=settings_service,
         settings_tester=settings_tester,
     )
@@ -285,6 +323,7 @@ def serve_dashboard_api(
     port: int = 8000,
     gate: ProjectActionGate | None = None,
     job_service=None,
+    script_editor=None,
     settings_service=None,
     settings_tester=None,
 ) -> int:
@@ -295,6 +334,7 @@ def serve_dashboard_api(
         port=port,
         gate=gate,
         job_service=job_service,
+        script_editor=script_editor,
         settings_service=settings_service,
         settings_tester=settings_tester,
     )
@@ -309,3 +349,10 @@ def serve_dashboard_api(
 
 def _path_parts(path: str) -> list[str]:
     return [part for part in urlparse(path).path.split("/") if part]
+
+
+def _active_job_for_project(job_service, project_id: str):
+    for job in job_service.list_jobs(project_id):
+        if job.get("status") in {"queued", "running", "cancelling"}:
+            return job
+    return None

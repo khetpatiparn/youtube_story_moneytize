@@ -150,6 +150,9 @@ class _FakeJobService:
         jobs = list(self.jobs.values())
         if project_id is not None:
             jobs = [job for job in jobs if job["projectId"] == project_id]
+            active_id = self.project_active_jobs.get(project_id)
+            if active_id is None:
+                jobs = [job for job in jobs if job["status"] not in {"queued", "running", "cancelling"}]
         return jobs
 
     def get_job(self, job_id: str):
@@ -201,6 +204,28 @@ class _FakeSettingsTester:
         return {"ok": True, "provider": provider}
 
 
+class _FakeScriptEditor:
+    def __init__(self):
+        self.revision = "rev_001"
+        self.calls = []
+        self.scenes = [
+            {"sceneId": "scene_001", "narration": "First narration", "prompt": "First prompt"},
+            {"sceneId": "scene_002", "narration": "Second narration", "prompt": "Second prompt"},
+        ]
+
+    def read(self, project_id: str):
+        self.calls.append(("read", project_id))
+        return {"revision": self.revision, "scenes": list(self.scenes)}
+
+    def update(self, project_id: str, revision: str, scenes):
+        self.calls.append(("update", project_id, revision, scenes))
+        if revision != self.revision:
+            raise ValueError("revision")
+        self.scenes = list(scenes)
+        self.revision = "rev_002"
+        return {"revision": self.revision, "scenes": list(self.scenes)}
+
+
 class DashboardControlApiTests(unittest.TestCase):
     def setUp(self):
         from app.http.dashboard_api import ProjectActionGate, create_dashboard_api_server
@@ -210,6 +235,7 @@ class DashboardControlApiTests(unittest.TestCase):
         self.job_service = _FakeJobService()
         self.settings_service = _FakeSettingsService()
         self.settings_tester = _FakeSettingsTester()
+        self.script_editor = _FakeScriptEditor()
         self.gate = ProjectActionGate()
         self.server = create_dashboard_api_server(
             self.summary_service,
@@ -217,6 +243,7 @@ class DashboardControlApiTests(unittest.TestCase):
             port=0,
             gate=self.gate,
             job_service=self.job_service,
+            script_editor=self.script_editor,
             settings_service=self.settings_service,
             settings_tester=self.settings_tester,
         )
@@ -253,6 +280,13 @@ class DashboardControlApiTests(unittest.TestCase):
 
         self.assertEqual(response.status, 200)
         self.assertEqual(response.json["projectId"], "project_001")
+
+    def test_get_script_endpoint_returns_revision_and_scenes(self):
+        response = self.request("GET", "/api/projects/project_001/script")
+
+        self.assertEqual(response.status, 200)
+        self.assertEqual(response.json["revision"], "rev_001")
+        self.assertEqual(response.json["scenes"][0]["sceneId"], "scene_001")
 
     def test_health_endpoint_reports_ready(self):
         response = self.request("GET", "/api/health")
@@ -352,16 +386,61 @@ class DashboardControlApiTests(unittest.TestCase):
         self.assertEqual(response.json["job"]["status"], "cancelling")
         self.assertTrue(response.json["job"]["cancelRequested"])
 
+    def test_put_script_endpoint_updates_revision_and_scenes(self):
+        self.job_service.project_active_jobs.pop("project_001", None)
+        response = self.request(
+            "PUT",
+            "/api/projects/project_001/script",
+            {
+                "revision": "rev_001",
+                "scenes": [
+                    {"sceneId": "scene_001", "narration": "Updated first", "prompt": "Updated prompt"},
+                    {"sceneId": "scene_002", "narration": "Updated second", "prompt": "Updated prompt 2"},
+                ],
+            },
+        )
+
+        self.assertEqual(response.status, 200)
+        self.assertEqual(response.json["revision"], "rev_002")
+        self.assertEqual(response.json["scenes"][0]["narration"], "Updated first")
+
+    def test_put_script_rejects_stale_revision(self):
+        self.job_service.project_active_jobs.pop("project_001", None)
+        response = self.request(
+            "PUT",
+            "/api/projects/project_001/script",
+            {
+                "revision": "old",
+                "scenes": [{"sceneId": "scene_001", "narration": "Updated", "prompt": "Updated"}],
+            },
+        )
+
+        self.assertEqual(response.status, 400)
+
+    def test_put_script_rejects_active_project_job(self):
+        response = self.request(
+            "PUT",
+            "/api/projects/project_001/script",
+            {
+                "revision": "rev_001",
+                "scenes": [{"sceneId": "scene_001", "narration": "Updated", "prompt": "Updated"}],
+            },
+        )
+
+        self.assertEqual(response.status, 409)
+        self.assertEqual(response.json["job"]["jobId"], "job_001")
+
     def test_unknown_job_returns_not_found(self):
         response = self.request("GET", "/api/jobs/job_999")
 
         self.assertEqual(response.status, 404)
 
     def test_approve_script_endpoint_validates_and_invokes_action_adapter(self):
+        self.job_service.project_active_jobs.pop("project_001", None)
         response = self.request(
             "POST",
             "/api/projects/project_001/approve-script",
-            {"approved": True, "reviewer": "human"},
+            {"approved": True, "reviewer": "human", "revision": "rev_001"},
         )
 
         self.assertEqual(response.status, 200)
@@ -372,10 +451,11 @@ class DashboardControlApiTests(unittest.TestCase):
         )
 
     def test_approve_script_endpoint_defaults_missing_reviewer_to_human(self):
+        self.job_service.project_active_jobs.pop("project_001", None)
         response = self.request(
             "POST",
             "/api/projects/project_001/approve-script",
-            {"approved": True},
+            {"approved": True, "revision": "rev_001"},
         )
 
         self.assertEqual(response.status, 200)
@@ -383,6 +463,16 @@ class DashboardControlApiTests(unittest.TestCase):
             ("approve", "script", "project_001", True, "human"),
             self.action_adapter.calls,
         )
+
+    def test_approve_script_endpoint_requires_current_revision(self):
+        self.job_service.project_active_jobs.pop("project_001", None)
+        response = self.request(
+            "POST",
+            "/api/projects/project_001/approve-script",
+            {"approved": True, "reviewer": "human", "revision": "stale"},
+        )
+
+        self.assertEqual(response.status, 409)
 
     def test_approve_final_endpoint_validates_and_invokes_action_adapter(self):
         response = self.request(

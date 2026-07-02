@@ -44,6 +44,7 @@ from app.services.pipeline_runner import PipelineRunner
 from app.services.quality import ffprobe_duration
 from app.services.rendering import RemotionRenderer
 from app.services.secret_store import WindowsDpapiProtector
+from app.services.script_editor import ScriptEditor
 from app.services.content_pipeline import validate_story_content
 from app.services.job_worker import JobWorker
 from app.services.timeline import wav_metadata
@@ -233,6 +234,7 @@ def _run_dashboard_api(args: argparse.Namespace) -> int:
         WindowsDpapiProtector(),
     )
     settings_tester = DashboardProviderTester(settings_service)
+    script_editor = ScriptEditor(projects)
 
     def runner_factory(project_id: str, *, configure_content: bool) -> PipelineRunner:
         runner_args = SimpleNamespace(
@@ -261,6 +263,7 @@ def _run_dashboard_api(args: argparse.Namespace) -> int:
         host=args.host,
         port=args.port,
         job_service=job_service,
+        script_editor=script_editor,
         settings_service=settings_service,
         settings_tester=settings_tester,
     )
