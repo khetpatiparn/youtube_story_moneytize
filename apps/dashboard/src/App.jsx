@@ -4,11 +4,13 @@ import {QueryClient, QueryClientProvider, useMutation, useQuery, useQueryClient}
 import {EmptyProjectsState} from "./components/EmptyProjectsState.jsx";
 import {ControlRail} from "./components/ControlRail.jsx";
 import {DashboardShell} from "./components/DashboardShell.jsx";
+import {LiveProductionPanel} from "./components/LiveProductionPanel.jsx";
 import {ProjectCreateForm} from "./components/ProjectCreateForm.jsx";
 import {ProjectQueuePanel} from "./components/ProjectQueuePanel.jsx";
 import {ProductionMonitor} from "./components/ProductionMonitor.jsx";
 import {SettingsPanel} from "./components/SettingsPanel.jsx";
 import {ScriptReview} from "./components/ScriptReview.jsx";
+import {loadProjectEvents} from "./data/eventRequests.js";
 import {loadJobs, runProjectJob} from "./data/jobRequests.js";
 import {loadDashboardProjectsFromApi} from "./data/loadApiProjects.js";
 import {copyProject, createProject, deleteProject} from "./data/projectRequests.js";
@@ -147,6 +149,13 @@ function DashboardApp() {
     const jobs = jobsQuery.data?.jobs ?? [];
     return jobs.find((job) => ["queued", "running", "cancelling"].includes(job.status)) ?? null;
   }, [jobsQuery.data]);
+
+  const eventsQuery = useQuery({
+    queryKey: ["events", selectedProject?.projectId],
+    queryFn: () => loadProjectEvents(fetch, selectedProject.projectId),
+    enabled: Boolean(selectedProject?.projectId) && mode === "api",
+    refetchInterval: activeJob ? 2000 : false,
+  });
 
   const runJobMutation = useMutation({
     mutationFn: ({projectId, operation}) => runProjectJob(fetch, projectId, operation),
@@ -391,6 +400,14 @@ function DashboardApp() {
         </header>
       )}
       main={(
+        <LiveProductionPanel
+          events={eventsQuery.data?.events ?? []}
+          job={activeJob}
+          project={selectedProject}
+        />
+      )}
+      workspace={(
+        <div className="secondary-workspace">
           <ScriptReview
             busy={saveScriptMutation.isPending || approveScriptMutation.isPending}
             project={selectedProject}
@@ -402,6 +419,7 @@ function DashboardApp() {
               saveScriptMutation.mutate({projectId: selectedProject.projectId, revision, scenes})
             }
           />
+        </div>
       )}
       rail={(
           <ControlRail

@@ -37,3 +37,10 @@ test("dashboard app is organized around shell, queue panel, and control rail", a
   assert.match(appSource, /ProjectQueuePanel/);
   assert.match(appSource, /ControlRail/);
 });
+
+test("dashboard app references LiveProductionPanel and loadProjectEvents", async () => {
+  const appSource = await readFile("apps/dashboard/src/App.jsx", "utf8");
+
+  assert.match(appSource, /LiveProductionPanel/);
+  assert.match(appSource, /loadProjectEvents/);
+});
