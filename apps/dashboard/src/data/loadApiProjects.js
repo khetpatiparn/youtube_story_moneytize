@@ -7,5 +7,6 @@ export async function loadDashboardProjectsFromApi(fetchImpl = fetch) {
   const payload = await response.json();
   return {
     projects: Array.isArray(payload.projects) ? payload.projects : [],
+    mode: "api",
   };
 }

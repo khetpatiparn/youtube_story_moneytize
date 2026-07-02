@@ -21,6 +21,7 @@ test("loads projects from the live api payload", async () => {
 
   assert.equal(payload.projects[0].source, "live");
   assert.deepEqual(payload.projects[0].availableActions, ["resume", "approve_final"]);
+  assert.equal(payload.mode, "api");
 });
 
 test("raises a readable error when the api responds with a failure status", async () => {
@@ -63,4 +64,16 @@ test("normalizes a missing projects array to an empty list", async () => {
   }));
 
   assert.deepEqual(payload.projects, []);
+  assert.equal(payload.mode, "api");
+});
+
+test("live api empty response stays empty instead of swapping to demo data", async () => {
+  const payload = await loadDashboardProjectsFromApi(async () => ({
+    ok: true,
+    async json() {
+      return {projects: []};
+    },
+  }));
+
+  assert.deepEqual(payload, {projects: [], mode: "api"});
 });

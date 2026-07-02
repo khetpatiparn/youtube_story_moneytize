@@ -11,6 +11,7 @@ test("dashboard app exposes the media qa workspace sections", async () => {
   assert.match(appSource, /SettingsPanel/);
   assert.match(appSource, /ScriptReview/);
   assert.match(appSource, /ProductionMonitor/);
+  assert.match(appSource, /EmptyProjectsState/);
   assert.match(appSource, /QueryClientProvider/);
   assert.match(appSource, /useQuery/);
   assert.match(appSource, /useMutation/);
@@ -23,5 +24,6 @@ test("dashboard app exposes the media qa workspace sections", async () => {
   assert.match(appSource, /Approval Summary/);
   assert.match(appSource, /Control Panel/);
   assert.match(appSource, /@tanstack\/react-query/);
+  assert.doesNotMatch(appSource, /return\s+\{projects:\s+\[sampleProject\],\s+mode:\s+"demo"\}/);
   assert.doesNotMatch(appSource, /localStorage/);
 });

@@ -1,6 +1,7 @@
 import React, {useEffect, useMemo, useState} from "react";
 import {QueryClient, QueryClientProvider, useMutation, useQuery, useQueryClient} from "@tanstack/react-query";
 
+import {EmptyProjectsState} from "./components/EmptyProjectsState.jsx";
 import {ProjectCreateForm} from "./components/ProjectCreateForm.jsx";
 import {ProductionMonitor} from "./components/ProductionMonitor.jsx";
 import {SettingsPanel} from "./components/SettingsPanel.jsx";
@@ -52,6 +53,7 @@ export function App() {
 function DashboardApp() {
   const queryClient = useQueryClient();
   const [selectedProjectId, setSelectedProjectId] = useState(null);
+  const [showCreatePanel, setShowCreatePanel] = useState(false);
   const [projectForm, setProjectForm] = useState(initialProjectForm);
   const [projectFormError, setProjectFormError] = useState("");
   const [settingsForm, setSettingsForm] = useState(initialSettingsForm);
@@ -63,10 +65,7 @@ function DashboardApp() {
     queryFn: async () => {
       try {
         const payload = await loadDashboardProjectsFromApi(fetch);
-        if (payload.projects.length > 0) {
-          return {projects: payload.projects, mode: "api"};
-        }
-        throw new Error("api returned no projects");
+        return payload;
       } catch {
         try {
           const response = await fetch("/dashboard-data.json");
@@ -77,7 +76,7 @@ function DashboardApp() {
           const projects = Array.isArray(payload.projects) ? payload.projects : [sampleProject];
           return {projects, mode: projects[0]?.source === "demo" ? "demo" : "static"};
         } catch {
-          return {projects: [sampleProject], mode: "demo"};
+          return buildDemoFallback();
         }
       }
     },
@@ -111,6 +110,12 @@ function DashboardApp() {
 
   const selectedProject = projects.find((project) => project.projectId === selectedProjectId) ?? projects[0] ?? null;
   const availableActions = Array.isArray(selectedProject?.availableActions) ? selectedProject.availableActions : [];
+
+  useEffect(() => {
+    if (mode === "api" && projects.length === 0) {
+      setShowCreatePanel(true);
+    }
+  }, [mode, projects.length]);
 
   const jobsQuery = useQuery({
     queryKey: ["jobs", selectedProject?.projectId],
@@ -251,6 +256,38 @@ function DashboardApp() {
         message: "",
       }),
   });
+
+  if (mode === "api" && projects.length === 0) {
+    return (
+      <main className="app-shell empty-state">
+        <section className="workspace empty-workspace">
+          <EmptyProjectsState onCreateIntent={() => setShowCreatePanel(true)} />
+          {showCreatePanel ? (
+            <div className="empty-actions-grid">
+              <ProjectCreateForm
+                busy={createProjectMutation.isPending}
+                error={projectFormError}
+                onChange={handleProjectInputChange}
+                onCopy={() => {}}
+                onCreate={handleCreateProject}
+                onDelete={() => {}}
+                selectedProjectId={null}
+                value={projectForm}
+              />
+              <SettingsPanel
+                busy={saveSettingsMutation.isPending || testProviderMutation.isPending}
+                error={settingsError}
+                onChange={handleSettingsInputChange}
+                onSave={handleSaveSettings}
+                onTest={handleTestProvider}
+                value={settingsForm}
+              />
+            </div>
+          ) : null}
+        </section>
+      </main>
+    );
+  }
 
   if (!selectedProject) {
     return <main className="app-shell empty-state">No project data available.</main>;
@@ -510,6 +547,11 @@ function modeLabel(mode, source) {
     return "Demo data";
   }
   return "Loading";
+}
+
+function buildDemoFallback() {
+  const fallback = {projects: [sampleProject], mode: "demo"};
+  return fallback;
 }
 
 function ApprovalRow({label, value}) {
