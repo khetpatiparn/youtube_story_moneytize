@@ -179,16 +179,21 @@ class JobRepository:
                 ).fetchone()
                 if current is None:
                     raise KeyError(job_id)
-                next_status = "cancelling" if current[0] in {"queued", "running"} else current[0]
+                next_status = {
+                    "queued": "cancelled",
+                    "running": "cancelling",
+                }.get(current[0], current[0])
+                finished_at = timestamp if next_status == "cancelled" else None
                 connection.execute(
                     """
                     update jobs
                     set cancel_requested = 1,
                         status = ?,
-                        updated_at = ?
+                        updated_at = ?,
+                        finished_at = coalesce(?, finished_at)
                     where job_id = ?
                     """,
-                    (next_status, timestamp, job_id),
+                    (next_status, timestamp, finished_at, job_id),
                 )
         return self.get(job_id)
 

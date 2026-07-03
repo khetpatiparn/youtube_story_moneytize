@@ -358,6 +358,9 @@ def serve_dashboard_api(
         return 0
     finally:
         server.server_close()
+        stop_jobs = getattr(job_service, "stop", None)
+        if callable(stop_jobs):
+            stop_jobs()
     return 0
 
 

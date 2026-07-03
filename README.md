@@ -121,6 +121,8 @@ npm.cmd run dev:dashboard
 
 `dev:dashboard` proxies `/api` to `http://127.0.0.1:8000`. When the API is available, the dashboard reads live project state, polls active jobs and project events, and can trigger `run`, `resume`, job cancellation, script review, and final approval. A valid empty live response stays empty and opens the project creation workflow; sample data is used only when the API itself is unavailable.
 
+Run and resume execute on a durable background worker. Cancelling a queued job completes it immediately; cancelling a running job is cooperative and takes effect at the next safe stage or scene boundary. After an application restart, interrupted jobs are marked failed and the latest checkpoint remains available for Resume.
+
 The browser control layer is local-only and now supports local project creation plus encrypted provider settings. It does not publish to YouTube.
 
 ## One-Click Browser Launch

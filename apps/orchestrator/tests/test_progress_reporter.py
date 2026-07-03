@@ -74,6 +74,19 @@ class ProgressReporterTests(unittest.TestCase):
             self.assertEqual(timeline[0]["stage"], "image_generating")
             self.assertIn("scene_003", timeline[0]["message"])
 
+    def test_stage_stops_when_running_job_has_been_cancelled(self):
+        from app.services.progress_reporter import JobCancelledError, ProgressReporter
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            jobs = JobRepository(Path(temp_dir) / "jobs.sqlite")
+            job = jobs.enqueue("project_001", "run")
+            jobs.claim_next()
+            jobs.request_cancel(job.job_id)
+            reporter = ProgressReporter(jobs, job.job_id)
+
+            with self.assertRaises(JobCancelledError):
+                reporter.stage("images", 0.6)
+
 
 if __name__ == "__main__":
     unittest.main()

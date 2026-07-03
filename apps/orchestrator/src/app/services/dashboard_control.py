@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import threading
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -251,11 +252,10 @@ class DashboardActionAdapter:
         self.projects.project_dir(project_id)
         if self.runner_factory is None:
             raise ValueError("runner_factory is required for run")
-        result = self.runner_factory(
-            project_id,
-            configure_content=True,
-            progress_reporter=progress_reporter,
-        ).run(project_id)
+        runner_options = {"configure_content": True}
+        if progress_reporter is not None:
+            runner_options["progress_reporter"] = progress_reporter
+        result = self.runner_factory(project_id, **runner_options).run(project_id)
         return self._action_summary(
             project_id,
             "run",
@@ -267,11 +267,10 @@ class DashboardActionAdapter:
         self.projects.project_dir(project_id)
         if self.runner_factory is None:
             raise ValueError("runner_factory is required for resume")
-        result = self.runner_factory(
-            project_id,
-            configure_content=False,
-            progress_reporter=progress_reporter,
-        ).resume(project_id)
+        runner_options = {"configure_content": False}
+        if progress_reporter is not None:
+            runner_options["progress_reporter"] = progress_reporter
+        result = self.runner_factory(project_id, **runner_options).resume(project_id)
         return self._action_summary(
             project_id,
             "resume",
@@ -336,9 +335,14 @@ class DashboardJobService:
     def __init__(self, jobs: JobRepository, worker: JobWorker) -> None:
         self.jobs = jobs
         self.worker = worker
+        self._wake = threading.Event()
+        self._stopping = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
 
     def enqueue(self, project_id: str, operation: str) -> dict[str, object]:
         job = self.jobs.enqueue(project_id, operation)
+        self._wake.set()
         return _job_to_dict(job)
 
     def list_jobs(self, project_id: str | None = None) -> list[dict[str, object]]:
@@ -349,6 +353,18 @@ class DashboardJobService:
 
     def cancel_job(self, job_id: str) -> dict[str, object]:
         return _job_to_dict(self.jobs.request_cancel(job_id))
+
+    def stop(self) -> None:
+        self._stopping.set()
+        self._wake.set()
+        self._thread.join(timeout=5)
+
+    def _run(self) -> None:
+        while not self._stopping.is_set():
+            while not self._stopping.is_set() and self.worker.process_one():
+                pass
+            self._wake.wait(timeout=1)
+            self._wake.clear()
 
 
 def _job_to_dict(job: JobRecord) -> dict[str, object]:

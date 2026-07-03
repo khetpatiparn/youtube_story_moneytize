@@ -67,6 +67,21 @@ class JobRepositoryTests(unittest.TestCase):
             self.assertEqual(updated.progress, 0.5)
             self.assertEqual(updated.stage, "images")
 
+    def test_cancelling_queued_job_finishes_it_and_releases_project(self):
+        from app.repositories.job_repository import JobRepository
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repository = JobRepository(Path(temp_dir) / "jobs.sqlite")
+            queued = repository.enqueue("project_001", "run")
+
+            cancelled = repository.request_cancel(queued.job_id)
+            replacement = repository.enqueue("project_001", "resume")
+
+            self.assertEqual(cancelled.status, "cancelled")
+            self.assertTrue(cancelled.cancel_requested)
+            self.assertIsNotNone(cancelled.finished_at)
+            self.assertEqual(replacement.status, "queued")
+
 
 if __name__ == "__main__":
     unittest.main()

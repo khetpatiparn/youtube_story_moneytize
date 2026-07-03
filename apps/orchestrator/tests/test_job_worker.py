@@ -94,6 +94,24 @@ class JobWorkerTests(unittest.TestCase):
         self.assertEqual(detail.status, "failed")
         self.assertEqual(detail.error_code, "application_restarted")
 
+    def test_worker_records_cooperative_cancellation_as_cancelled(self):
+        from app.services.job_worker import JobWorker
+
+        def run_project(project_id, progress_reporter=None):
+            self.jobs.request_cancel(job.job_id)
+            progress_reporter.stage("images", 0.6)
+            self.fail("cancelled pipeline continued")
+
+        self.actions.run_project.side_effect = run_project
+        worker = JobWorker(self.jobs, self.actions, secret_values=lambda: [])
+        job = self.jobs.enqueue("project_001", "run")
+
+        worker.process_one()
+        detail = self.jobs.get(job.job_id)
+
+        self.assertEqual(detail.status, "cancelled")
+        self.assertTrue(detail.cancel_requested)
+
 
 if __name__ == "__main__":
     unittest.main()

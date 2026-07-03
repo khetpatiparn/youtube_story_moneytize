@@ -6,7 +6,7 @@ from typing import Any
 from app.repositories.job_repository import JobRepository
 from app.services.error_sanitizer import sanitize_error
 from app.services.project_events import ProjectEventStore
-from app.services.progress_reporter import ProgressReporter
+from app.services.progress_reporter import JobCancelledError, ProgressReporter
 
 OPERATIONS = {"run": "run_project", "resume": "resume_project"}
 
@@ -36,12 +36,15 @@ class JobWorker:
                 job.project_id,
                 progress_reporter=reporter,
             )
+            reporter.raise_if_cancelled()
             self.jobs.finish(
                 job.job_id,
                 "succeeded",
                 progress=1.0,
                 stage=result.get("currentNode"),
             )
+        except JobCancelledError:
+            self.jobs.finish(job.job_id, "cancelled")
         except Exception as error:
             code, message = sanitize_error(error, self.secret_values())
             self.jobs.finish(
